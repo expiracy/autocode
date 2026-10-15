@@ -1,7 +1,29 @@
 {
-  "name": "autocode",
-  "version": "0.1.0",
+  "name": "opencode-autocode",
+  "version": "0.1.0-beta.1",
   "description": "Model-based command approval for OpenCode 2",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/expiracy/autocode.git"
+  },
+  "homepage": "https://github.com/expiracy/autocode#readme",
+  "bugs": {
+    "url": "https://github.com/expiracy/autocode/issues"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "autocode",
+    "permissions",
+    "command-approval",
+    "ai"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org",
+    "tag": "next"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -24,6 +46,11 @@
     "tui.js",
     "dist",
     "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "RELEASING.md",
+    "docs/assets/settings.png",
     "examples"
   ],
   "scripts": {
@@ -31,9 +58,12 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "smoke": "npm run build && node test/smoke.mjs",
+    "smoke:registry": "npm run build && node test/smoke.mjs --registry-install",
     "test:live": "node test/live-provider.mjs",
     "check": "npm run typecheck && npm test && npm run build",
-    "prepack": "npm run build"
+    "release:check": "npm run check && npm run smoke:registry && npm pack --dry-run",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check"
   },
   "engines": {
     "node": ">=22.18.0"

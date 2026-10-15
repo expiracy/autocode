@@ -23,6 +23,65 @@ test("reads installed global options with inherited defaults and a revision", as
   } finally { await f.clean(); }
 });
 
+test("reads global options registered by the published package name", async () => {
+  const f = await fixture(JSON.stringify({ plugins: [{ package: "opencode-autocode", options: { timeoutMs: 45_000 } }] }));
+  try {
+    assert.equal((await f.store.read()).effective.timeoutMs, 45_000);
+  } finally { await f.clean(); }
+});
+
+test("saves pinned prerelease settings without changing the package version or unrelated configuration", async () => {
+  const entry = { package: "opencode-autocode@0.1.0-beta.1", options: { timeoutMs: 45_000 } };
+  const config = {
+    model: "coding/model",
+    plugins: [{ package: "another-plugin", options: { enabled: true } }, entry],
+    permissions: [{ action: "shell", resource: "sudo *", effect: "deny" }],
+  };
+  const f = await fixture(JSON.stringify(config, null, 2));
+  try {
+    const before = await f.store.read();
+    const after = await f.store.save(before.revision, { timeoutMs: 60_000, model: "provider/reviewer" });
+    assert.equal(after.effective.timeoutMs, 60_000);
+    assert.deepEqual(JSON.parse(await readFile(f.path, "utf8")), {
+      ...config,
+      plugins: [config.plugins[0], { ...entry, options: { timeoutMs: 60_000, model: "provider/reviewer" } }],
+    });
+  } finally { await f.clean(); }
+});
+
+test("adds settings to a dist-tag string registration while preserving the tag", async () => {
+  const f = await fixture(JSON.stringify({ plugins: ["opencode-autocode@next"] }));
+  try {
+    const before = await f.store.read();
+    await f.store.save(before.revision, { enabled: false });
+    assert.deepEqual(JSON.parse(await readFile(f.path, "utf8")), {
+      plugins: [{ package: "opencode-autocode@next", options: { enabled: false } }],
+    });
+  } finally { await f.clean(); }
+});
+
+test("does not edit an unrelated autocode registry package", async () => {
+  const f = await fixture(JSON.stringify({ plugins: [{ package: "autocode", options: { enabled: true } }] }));
+  try {
+    await assert.rejects(f.store.read(), /Install AutoCode/i);
+    assert.equal(await readFile(f.path, "utf8"), f.source);
+  } finally { await f.clean(); }
+});
+
+test("does not treat the unpublished open-auto-code registry name as AutoCode", async () => {
+  const f = await fixture(JSON.stringify({ plugins: ["open-auto-code@0.1.0"] }));
+  try {
+    await assert.rejects(f.store.read(), /Install AutoCode/i);
+  } finally { await f.clean(); }
+});
+
+test("does not recognize a registry registration with an extra package suffix", async () => {
+  const f = await fixture(JSON.stringify({ plugins: ["opencode-autocode@next@another-package"] }));
+  try {
+    await assert.rejects(f.store.read(), /Install AutoCode/i);
+  } finally { await f.clean(); }
+});
+
 test("saves only AutoCode options while preserving JSONC comments and other settings", async () => {
   const source = `{
   // Keep this profile comment.

@@ -11,8 +11,12 @@ import { randomUUID } from "node:crypto";
 
 // Runs only against a local fake provider, in disposable config/data directories.
 // Build first: npm run build && node test/smoke.mjs
+// Add --registry-install to resolve the packed package's dependencies from npm
+// in an empty cache, without peer-dependency bypasses or seeded packages.
 const exec = promisify(execFile);
 const repository = fileURLToPath(new URL("..", import.meta.url));
+const registryInstall = process.argv.includes("--registry-install");
+assert.ok(process.argv.slice(2).every((argument) => argument === "--registry-install"), "Unknown smoke-test option.");
 const temporary = await mkdtemp(path.join(tmpdir(), "autocode-smoke-"));
 const serverPassword = randomUUID();
 const requests = [];
@@ -92,28 +96,47 @@ try {
   const globalNpmConfig = path.join(temporary, "global-npmrc");
   await writeFile(npmConfig, "");
   await writeFile(globalNpmConfig, "");
-  const npmFlags = ["--cache", path.join(temporary, "npm-cache"), "--userconfig", npmConfig, "--globalconfig", globalNpmConfig];
+  const npmFlags = ["--cache", path.join(temporary, "npm-cache"), "--userconfig", npmConfig, "--globalconfig", globalNpmConfig,
+    "--registry", "https://registry.npmjs.org"];
+  const npmEnvironment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
+    !/^(?:npm_config_|npm_token$|node_auth_token$)/i.test(name)));
   const { stdout } = await exec("npm", [
     "pack", ...npmFlags, "--ignore-scripts", "--json", "--pack-destination", temporary,
-  ], { cwd: repository, timeout: 30_000 });
-  const [{ filename }] = JSON.parse(stdout);
-  const { stdout: dependencyPack } = await exec("npm", [
-    "pack", ...npmFlags, "--ignore-scripts", "--json", "--pack-destination", temporary,
-  ], { cwd: path.join(repository, "node_modules/jsonc-parser"), timeout: 30_000 });
-  const [{ filename: dependencyFilename }] = JSON.parse(dependencyPack);
+  ], { cwd: repository, env: npmEnvironment, timeout: 30_000 });
+  const [{ filename, name, version }] = JSON.parse(stdout);
+  assert.equal(name, "opencode-autocode", "Smoke tests must use the final npm package identity.");
   const installation = path.join(temporary, "installed");
   await mkdir(installation);
   await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
-  await exec("npm", [
-    "install", ...npmFlags, "--offline", "--ignore-scripts", "--legacy-peer-deps", "--no-audit", "--no-fund",
-    path.join(temporary, dependencyFilename), path.join(temporary, filename),
-  ], { cwd: installation, timeout: 30_000 });
-  const installed = path.join(installation, "node_modules/autocode");
+  if (registryInstall) {
+    // Install only the consumer tarball: npm must obtain every dependency and
+    // satisfy its peers normally. Scripts stay disabled to prove dist is shipped.
+    await exec("npm", [
+      "install", ...npmFlags, "--ignore-scripts", "--no-audit", "--no-fund", path.join(temporary, filename),
+    ], { cwd: installation, env: npmEnvironment, timeout: 180_000 });
+    await exec("npm", ["ls", ...npmFlags, "--omit=dev", "--all"], {
+      cwd: installation, env: npmEnvironment, timeout: 30_000,
+    });
+    console.log("package: fresh-cache npm installation resolved dependencies and peers normally; no consumer build was required.");
+  } else {
+    // Fast deterministic native checks reuse only the locally available runtime
+    // dependency; the separate registry mode validates normal npm resolution.
+    const { stdout: dependencyPack } = await exec("npm", [
+      "pack", ...npmFlags, "--ignore-scripts", "--json", "--pack-destination", temporary,
+    ], { cwd: path.join(repository, "node_modules/jsonc-parser"), env: npmEnvironment, timeout: 30_000 });
+    const [{ filename: dependencyFilename }] = JSON.parse(dependencyPack);
+    await exec("npm", [
+      "install", ...npmFlags, "--offline", "--ignore-scripts", "--legacy-peer-deps", "--no-audit", "--no-fund",
+      path.join(temporary, dependencyFilename), path.join(temporary, filename),
+    ], { cwd: installation, env: npmEnvironment, timeout: 30_000 });
+  }
+  const installed = path.join(installation, "node_modules", name);
   await access(path.join(installed, "dist/index.js"));
   await access(path.join(installed, "tui.js"));
   await access(path.join(installed, "dist/tui.js"));
   const installedPackage = JSON.parse(await readFile(path.join(installed, "package.json"), "utf8"));
-  assert.equal(installedPackage.name, "autocode");
+  assert.equal(installedPackage.name, "opencode-autocode");
+  assert.equal(installedPackage.version, version);
   assert.equal(installedPackage.exports["./tui"].import, "./tui.js", "The native UI companion must be discoverable.");
 
   fakeProvider.listen(0, "127.0.0.1");

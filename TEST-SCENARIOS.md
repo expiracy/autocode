@@ -20,11 +20,26 @@
 - [x] Keep the settings command visible while the native command palette owns modal input.
 - [x] Search connected models by displayed name, provider, or raw model ID.
 
-Validation passed 96 unit tests, type checking, and build. The installed
+Validation passed 102 unit tests, type checking, and build. The installed
 OpenCode 2.0.28 terminal client was also checked directly: the command palette
 and `/autocode settings` open the editor, raw model-ID searches return connected
 models, and the reasoning-variant picker renders the model's available variants.
 The terminal checks closed without saving changes.
+
+## npm release preparation
+
+- [x] Recognize global `opencode-autocode` registrations by name, pinned prerelease, and distribution tag.
+- [x] Preserve the package specifier, unrelated options, and deny rules when saving settings.
+- [x] Refuse unrelated registry package names while retaining local path and symlink support.
+- [x] Install the renamed tarball from an empty npm cache with normal dependency and peer resolution.
+- [x] Run the full native suite from that installation without consumer build scripts.
+- [x] Ship MIT licensing, release metadata, examples, and user documentation in the package.
+- [ ] Verify installation directly from the public npm package after publication.
+
+The prepared version is `opencode-autocode@0.1.0-beta.1`. It remains unpublished.
+The registry installation check downloads dependencies but installs the plugin
+from its local packed tarball; it cannot test public package-name resolution yet.
+The GitHub workflows check and prepare artifacts without publishing them.
 
 ## Hard rejection precedence
 

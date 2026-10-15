@@ -30,7 +30,7 @@ export interface SettingsView extends SettingsSnapshot {
 type SettingsTarget = { directory?: string; configFile?: string; packagePath?: string };
 
 async function matchesPackage(name: string, packagePath: string, directory: string): Promise<boolean> {
-  if (/^(?:autocode|open-auto-code)(?:@[^/]+)?$/.test(name)) return true;
+  if (/^opencode-autocode(?:@[^/@\s]+)?$/.test(name)) return true;
   const path = name.startsWith("file://") ? fileURLToPath(name)
     : isAbsolute(name) || name.startsWith(".") ? resolve(directory, name) : undefined;
   if (path === undefined) return false;
