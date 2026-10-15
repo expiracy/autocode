@@ -4,6 +4,8 @@ An OpenCode v2 plugin that uses a model to review shell commands awaiting approv
 
 The reviewer can allow the pending command, leave it for your normal approval prompt, or deny it. Existing `allow` decisions bypass review, and configured `deny` rules stay blocked. Reviews apply to individual requests; the plugin never saves an “Allow always” rule. This follows OpenCode's [v2 permission hook](https://opencode.ai/v2/docs/build/plugins/#permissions) and [permission rules](https://opencode.ai/v2/docs/permissions/).
 
+AutoCode only reviews shell permissions whose current effect is `ask`. OpenCode rejects commands matching its resolved permission deny rules before calling the reviewer, including compound commands with a denied resource and commands with a saved “Allow always” approval. OpenCode's hard [tool policies](https://opencode.ai/v2/docs/policies/) also remain enforced: a policy can reject a command even after the reviewer returns `allow`. Such policy checks can happen after a model call. AutoCode settings never edit your permission rules or policies.
+
 This project targets OpenCode **2.0.28** and its v2 plugin API. Building and testing requires **Node.js 22.18 or newer** and npm. Build the local checkout before loading it:
 
 ```sh
@@ -95,7 +97,7 @@ For an integration check with an installed OpenCode v2 binary:
 npm run smoke
 ```
 
-The smoke test packs and installs AutoCode in a temporary global configuration, starts an isolated OpenCode server, and checks inherited and separate reviewer models using a local fake provider. It also checks the settings command, connected model choices, and persistence of settings. It does not send model traffic to an external provider or change your installed configuration. It uses `~/.opencode/bin/opencode` when available, otherwise `opencode` on `PATH`; set `OPENCODE_BIN` to select another binary:
+The smoke test packs and installs AutoCode in a temporary global configuration, starts an isolated OpenCode server, and checks inherited and separate reviewer models using a local fake provider. It also checks hard rejection precedence, the settings command, connected model choices, and persistence of settings. Its reviewer always returns `allow`, so the rejection checks verify OpenCode's enforcement independently of model judgment. It does not send model traffic to an external provider or change your installed configuration. It uses `~/.opencode/bin/opencode` when available, otherwise `opencode` on `PATH`; set `OPENCODE_BIN` to select another binary:
 
 ```sh
 OPENCODE_BIN=/absolute/path/to/opencode npm run smoke

@@ -20,11 +20,27 @@
 - [x] Keep the settings command visible while the native command palette owns modal input.
 - [x] Search connected models by displayed name, provider, or raw model ID.
 
-Validation passed 95 unit tests, type checking, and build. The installed
+Validation passed 96 unit tests, type checking, and build. The installed
 OpenCode 2.0.28 terminal client was also checked directly: the command palette
 and `/autocode settings` open the editor, raw model-ID searches return connected
 models, and the reasoning-variant picker renders the model's available variants.
 The terminal checks closed without saving changes.
+
+## Hard rejection precedence
+
+- [x] Preserve an existing deny and its original reason without reading session context or calling a model.
+- [x] Reject a configured permission deny without calling the reviewer or offering an approval prompt.
+- [x] Reject a compound command when one of its resources is denied.
+- [x] Keep a configured deny final even when a saved “Allow always” approval matches.
+- [x] Enforce a hard tool policy even when the automatic reviewer returns allow.
+- [x] Stop a real configured-denied shell tool before its harmless output file is created, without a review or prompt.
+- [x] Stop a real policy-denied shell tool after an automatic allow, without creating its output file or an approval prompt.
+
+These native checks passed on OpenCode 2.0.28 with an isolated temporary
+configuration and a local reviewer that always returns allow. Configured permission
+denies must bypass review; hard tool policies may reject after a review call.
+OpenCode's normal last-matching-rule semantics still determine the resolved
+permission effect. AutoCode does not maintain a separate deny-list matcher.
 
 ## Real provider verification
 

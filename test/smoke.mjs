@@ -26,12 +26,19 @@ const fakeProvider = createServer(async (request, response) => {
     for await (const chunk of request) text += chunk;
     const body = JSON.parse(text);
     requests.push(body);
-    const livePrompt = body.messages?.some((message) => JSON.stringify(message.content).includes("LIVE_SMOKE"));
+    const hasPrompt = (marker) => body.messages?.some((message) => JSON.stringify(message.content).includes(marker));
+    const hardRejectPrompt = hasPrompt("LIVE_HARD_REJECT");
+    const policyRejectPrompt = hasPrompt("LIVE_POLICY_REJECT");
+    const livePrompt = hasPrompt("LIVE_SMOKE") || hardRejectPrompt || policyRejectPrompt;
     const hasToolResult = body.messages?.some((message) => message.role === "tool");
     const shell = body.tools?.find((tool) => tool.function?.name === "shell");
     const toolCall = livePrompt && shell && !hasToolResult ? {
-      id: "call_live_smoke", type: "function",
-      function: { name: shell.function.name, arguments: JSON.stringify({ command: "printf smoke-check" }) },
+      id: hardRejectPrompt ? "call_live_hard_reject" : policyRejectPrompt ? "call_live_policy_reject" : "call_live_smoke",
+      type: "function",
+      function: { name: shell.function.name, arguments: JSON.stringify({
+        command: hardRejectPrompt ? "printf smoke-blocked > .autocode-hard-reject-marker"
+          : policyRejectPrompt ? "printf smoke-policy > .autocode-policy-reject-marker" : "printf smoke-check",
+      }) },
     } : undefined;
     const content = livePrompt && body.tools?.length ? "Smoke command completed." :
       JSON.stringify({ decision: "allow", reason: "Local smoke test approval." });
@@ -149,6 +156,18 @@ try {
     }));
     projects[mode] = directory;
   }
+  projects.hardReject = path.join(temporary, "hard-reject");
+  await mkdir(projects.hardReject);
+  await writeFile(path.join(projects.hardReject, "opencode.json"), JSON.stringify({
+    permissions: [
+      { action: "shell", resource: "*", effect: "ask" },
+      { action: "shell", resource: "printf smoke-allowed *", effect: "allow" },
+      { action: "shell", resource: "printf smoke-blocked *", effect: "deny" },
+    ],
+    experimental: {
+      policies: [{ action: "tool.use", resource: "shell:printf smoke-policy *", effect: "deny" }],
+    },
+  }));
 
   // Reserve a free port; the server receives no connection to an existing service.
   const reservation = createServer();
@@ -383,6 +402,113 @@ try {
   assert.equal(inherited.effective.model, undefined);
   await waitForApprovalMode("inherit", "allow", "inherited");
   console.log("settings: models/variants listed, /autocode opens while disabled, global choices persisted and live approvals updated; project override preserved.");
+
+  async function shellFixture(directory, command, permissions) {
+    const location = { directory };
+    const { data: seed } = await api("/api/session", { location, model, permissions });
+    const created = Date.now();
+    const assistantID = `msg_${randomUUID().replaceAll("-", "")}`;
+    const toolID = `call_${randomUUID().replaceAll("-", "")}`;
+    const { data: session } = await api("/api/experimental/session/import", {
+      info: { ...seed, id: `ses_${randomUUID().replaceAll("-", "")}` }, location,
+      messages: [
+        { id: `msg_${randomUUID().replaceAll("-", "")}`, type: "user", time: { created },
+          text: `Please run exactly ${command} in this temporary project.` },
+        { id: assistantID, type: "assistant", agent: "build", model,
+          time: { created: created + 1, streamed: created + 2, completed: created + 3 }, finish: "tool-calls",
+          content: [{ type: "tool", id: toolID, name: "shell",
+            time: { created: created + 1, ran: created + 2, completed: created + 3 },
+            state: { status: "completed", metadata: {}, content: [{ type: "text", text: "Recorded fixture; no process was run." }],
+              input: { command, workdir: directory } } }] },
+      ],
+    });
+    const { data: messages } = await api(`/api/session/${session.id}/context`);
+    const assistant = messages.find((message) => message.type === "assistant");
+    const tool = assistant?.content.find((part) => part.type === "tool" && part.name === "shell");
+    assert.ok(assistant && tool, "Hard-reject fixture must include the originating shell command.");
+    return { sessionID: session.id, permission: {
+      action: "shell", resources: [command],
+      source: { type: "tool", messageID: assistant.id, id: tool.id },
+    } };
+  }
+  const blocked = await shellFixture(projects.hardReject, "printf smoke-blocked");
+  const beforeBlocked = requests.length;
+  assert.equal((await api(`/api/session/${blocked.sessionID}/permission`, blocked.permission)).data.effect, "deny");
+  assert.equal(requests.length, beforeBlocked, "A configured deny must bypass the approval model.");
+  assert.deepEqual((await api(`/api/session/${blocked.sessionID}/permission`)).data, [], "A configured deny must not create an approval prompt.");
+  console.log("hard reject: a configured deny blocks the command before model review or prompting.");
+  const compound = await shellFixture(projects.hardReject, "printf smoke-allowed; printf smoke-blocked");
+  compound.permission.resources = ["printf smoke-allowed", "printf smoke-blocked"];
+  const beforeCompound = requests.length;
+  assert.equal((await api(`/api/session/${compound.sessionID}/permission`, compound.permission)).data.effect, "deny");
+  assert.equal(requests.length, beforeCompound, "One denied resource must block the whole compound command before model review.");
+  assert.deepEqual((await api(`/api/session/${compound.sessionID}/permission`)).data, []);
+  console.log("hard reject: a denied resource blocks the whole compound command.");
+  const disabledForSavedApproval = await rpc("saveSettings", {
+    revision: inherited.revision, options: { ...inherited.options, enabled: false },
+  });
+  await waitForApprovalMode("inherit", "ask");
+  const savedCommand = "printf smoke-saved";
+  const savedFixture = await shellFixture(projects.inherit, savedCommand);
+  const savedRequest = await api(`/api/session/${savedFixture.sessionID}/permission`, {
+    ...savedFixture.permission, save: [savedCommand],
+  });
+  assert.equal(savedRequest.data.effect, "ask");
+  await api(`/api/session/${savedFixture.sessionID}/permission/${savedRequest.data.id}/reply`, { decision: "always" });
+  const { data: savedApprovals } = await api("/api/permission/saved");
+  assert.ok(savedApprovals.some((entry) => entry.action === "shell" && entry.resource === savedCommand), "The native Allow always rule must actually be persisted.");
+  const beforeSavedControl = requests.length;
+  assert.equal((await api(`/api/session/${savedFixture.sessionID}/permission`, savedFixture.permission)).data.effect, "allow");
+  assert.equal(requests.length, beforeSavedControl, "The saved-approval control must allow without a model review.");
+  await rpc("saveSettings", {
+    revision: disabledForSavedApproval.revision, options: inherited.options,
+  });
+  await waitForApprovalMode("inherit", "allow", "inherited");
+  const deniedAfterSaved = await shellFixture(projects.inherit, savedCommand, [
+    { action: "shell", resource: savedCommand, effect: "deny" },
+  ]);
+  const beforeSavedDeny = requests.length;
+  assert.equal((await api(`/api/session/${deniedAfterSaved.sessionID}/permission`, deniedAfterSaved.permission)).data.effect, "deny");
+  assert.equal(requests.length, beforeSavedDeny, "A configured deny must beat a persisted Allow always rule without model review.");
+  assert.deepEqual((await api(`/api/session/${deniedAfterSaved.sessionID}/permission`)).data, []);
+  console.log("hard reject: configured deny wins over a verified native Allow always approval.");
+  const policyBlocked = await shellFixture(projects.hardReject, "printf smoke-policy");
+  const beforePolicy = requests.length;
+  assert.equal((await api(`/api/session/${policyBlocked.sessionID}/permission`, policyBlocked.permission)).data.effect, "deny");
+  assert.equal(requests.length, beforePolicy + 1, "The policy must override an actual allow from the local approval reviewer.");
+  assert.ok(!requests.at(-1).tools?.length);
+  assert.deepEqual((await api(`/api/session/${policyBlocked.sessionID}/permission`)).data, [], "A policy deny must not create an approval prompt.");
+  console.log("hard reject: protected tool.use policy overrides an automatic model approval.");
+
+  async function assertRejectedShell({ marker, toolID, outputFile, reviewCount, reason }) {
+    const { data: session } = await api("/api/session", { location: { directory: projects.hardReject }, model });
+    const before = requests.length;
+    await api(`/api/session/${session.id}/prompt`, {
+      text: `${marker}: Run the shell command requested by this local test provider.`,
+    });
+    await api(`/api/experimental/session/${session.id}/wait`, {}, 20_000);
+    const { data: messages } = await api(`/api/session/${session.id}/context`);
+    const call = messages.flatMap((message) => message.type === "assistant" ? message.content : [])
+      .find((part) => part.type === "tool" && part.id === toolID);
+    assert.ok(call, "The coding model must actually propose the rejected shell command.");
+    assert.equal(call.state.status, "error", `A hard-rejected shell command must fail: ${JSON.stringify(call)}`);
+    assert.match(JSON.stringify(call.state.error), reason);
+    await assert.rejects(access(path.join(projects.hardReject, outputFile)), { code: "ENOENT" }, "The rejected command must never execute its harmless printf redirection.");
+    const reviews = requests.slice(before).filter((request) => request.messages?.some((message) =>
+      JSON.stringify(message.content).includes("REVIEW_DATA_JSON")));
+    assert.equal(reviews.length, reviewCount);
+    assert.deepEqual((await api(`/api/session/${session.id}/permission`)).data, []);
+  }
+  await assertRejectedShell({
+    marker: "LIVE_HARD_REJECT", toolID: "call_live_hard_reject", outputFile: ".autocode-hard-reject-marker",
+    reviewCount: 0, reason: /Permission denied/,
+  });
+  console.log("hard reject: configured-denied shell tool failed without review and never created its printf marker.");
+  await assertRejectedShell({
+    marker: "LIVE_POLICY_REJECT", toolID: "call_live_policy_reject", outputFile: ".autocode-policy-reject-marker",
+    reviewCount: 1, reason: /Blocked by configuration policy/,
+  });
+  console.log("hard reject: policy-denied shell tool failed despite the model's approval and never created its printf marker.");
   console.log("Smoke test passed; all model traffic stayed on the local fake provider.");
 } catch (error) {
   const logFiles = (await readdir(temporary, { recursive: true })).filter((name) =>

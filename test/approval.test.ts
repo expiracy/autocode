@@ -129,6 +129,29 @@ test("leaves existing allows, denies, and unrelated permission actions unchanged
   assert.equal(h.requests.length, 0);
 });
 
+test("preserves a hard rejection and its reason without reading context or calling a model", async () => {
+  const h = harness({ model: "provider/reviewer" });
+  let reviewCalls = 0;
+  const unexpectedReview = async () => {
+    reviewCalls++;
+    throw new Error("A denied command must not enter automatic review");
+  };
+  h.ctx.session.context = unexpectedReview;
+  h.ctx.session.get = unexpectedReview;
+  h.ctx.session.generate = unexpectedReview;
+  h.ctx.generate.text = unexpectedReview;
+  h.ctx.model.default = unexpectedReview;
+  await h.setup();
+
+  const message = "Blocked by an OpenCode deny rule.";
+  const event = await h.evaluate({ effect: "deny", message });
+
+  assert.equal(event.effect, "deny");
+  assert.equal(event.message, message);
+  assert.equal(reviewCalls, 0);
+  assert.equal(h.requests.length, 0);
+});
+
 test("shows an explicit ask or deny verdict and its reason", async () => {
   const h = harness();
   await h.setup();
