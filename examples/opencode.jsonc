@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Merge into your global OpenCode configuration for /autocode settings.
+  "plugins": [
+    {
+      // Build this checkout with npm ci and npm run build before loading it.
+      "package": "/absolute/path/autocode",
+      "options": {
+        // Omit model to inherit the proposing assistant's model and variant.
+        "enabled": true,
+        "timeoutMs": 30000,
+        "maxContextChars": 64000
+      }
+    }
+  ],
+  "permissions": [
+    { "action": "shell", "resource": "*", "effect": "ask" }
+  ]
+}

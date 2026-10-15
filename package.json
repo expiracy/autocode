@@ -1,0 +1,52 @@
+{
+  "name": "autocode",
+  "version": "0.1.0",
+  "description": "Model-based command approval for OpenCode 2",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./tui.js"
+    },
+    "./rpc": {
+      "types": "./dist/rpc.d.ts",
+      "import": "./dist/rpc.js"
+    }
+  },
+  "main": "./index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "index.js",
+    "tui.js",
+    "dist",
+    "README.md",
+    "examples"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "smoke": "npm run build && node test/smoke.mjs",
+    "test:live": "node test/live-provider.mjs",
+    "check": "npm run typecheck && npm test && npm run build",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": ">=2.0.28 <3"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.0.28",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "jsonc-parser": "3.3.1"
+  }
+}
