@@ -12,7 +12,7 @@
 - [x] Preserve separation between concurrent sessions and the proposing model versus a later selection.
 - [x] Load the packed plugin in OpenCode 2.0.28 and auto-approve a real shell call.
 - [x] Offer enabled, model, variant, timeout, and context-budget controls in the native settings dialog.
-- [x] Open settings from `/autocode settings` without calling the coding model, including while disabled.
+- [x] Open settings from `/autocode config` without calling the coding model, including while disabled.
 - [x] List connected models and supported reasoning variants through native RPC.
 - [x] Save choices in the global native plugin options while preserving unrelated configuration.
 - [x] Apply disable and inherited-model settings to subsequent real native permission evaluations.
@@ -20,11 +20,31 @@
 - [x] Keep the settings command visible while the native command palette owns modal input.
 - [x] Search connected models by displayed name, provider, or raw model ID.
 
-Validation passed 102 unit tests, type checking, and build. The installed
+Validation passed 151 unit tests, type checking, and build. The installed
 OpenCode 2.0.28 terminal client was also checked directly: the command palette
-and `/autocode settings` open the editor, raw model-ID searches return connected
+and `/autocode config` open the editor, raw model-ID searches return connected
 models, and the reasoning-variant picker renders the model's available variants.
 The terminal checks closed without saving changes.
+
+## Commands and review history
+
+- [x] Use `/autocode config` as the settings command, rejecting the old `settings` alias.
+- [x] Open `/autocode log`, `/autocode status`, and `/autocode help`; bare `/autocode` opens help.
+- [x] Keep every command available while disabled, without generating model requests.
+- [x] Retain the newest 100 reviews in durable plugin storage, isolated by canonical project location.
+- [x] Preserve history across reloads, concurrent writes, and directory aliases.
+- [x] Record verdict, reason, selected model, session, timestamp, and duration without raw command, conversation, or provider-error fields.
+- [x] Keep logging failures or stalled writes from delaying or changing permissions.
+- [x] Search, refresh, inspect details, and clear only the current project's history after confirmation.
+- [x] Open the log from config and return to an unsaved draft without saving it.
+- [x] Show effective project status, including model overrides and disabled state.
+- [x] Keep configured denies out of AutoCode history and label later policy-blocked approvals as reviewer verdicts.
+- [x] Verify actual native config, log list/details, and bare-command help without user configuration changes.
+
+Both native installation modes passed on OpenCode 2.0.28. The directory alias
+regression was also verified with macOS `/var/...` API locations and the native
+TUI's `/private/var/...` location for the same directory. Reasons may quote supplied
+context despite the metadata-only storage shape; the UI and README explain this.
 
 ## npm release preparation
 

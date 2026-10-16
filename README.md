@@ -1,6 +1,6 @@
 # AutoCode
 
-Model-based shell command approval for OpenCode v2. AutoCode reviews commands that would otherwise need your approval, using the coding model by default or a separate model you choose. Configure it from `/autocode settings` without changing your coding model.
+Model-based shell command approval for OpenCode v2. AutoCode reviews commands that would otherwise need your approval, using the coding model by default or a separate model you choose. Configure it from `/autocode config` without changing your coding model, and inspect recent reviews with `/autocode log`.
 
 **Release status:** `opencode-autocode@0.1.0-beta.1` is being prepared and has **not been published to npm**. You can [use a local checkout](#use-a-local-checkout-now) today.
 
@@ -59,7 +59,7 @@ AutoCode only reviews the `shell` requests OpenCode resolves to `ask`. If your c
 
 **Preserve your existing restrictions.** OpenCode uses the last matching permission rule, so appending a broad `ask` rule after a specific `deny` can change OpenCode's resolved decision. See [permission rules](https://opencode.ai/v2/docs/permissions/) and the [complete configuration example](examples/opencode.jsonc).
 
-Restart OpenCode, enter `/autocode settings`, and choose **Save settings** after any changes. You can also open **AutoCode settings** from the command palette. The dialog lets you enable reviews, choose an approval model and its variant, and adjust the timeout and context budget.
+Restart OpenCode, enter `/autocode config`, and choose **Save settings** after any changes. You can also open **AutoCode config** from the command palette. The dialog lets you enable reviews, choose an approval model and its variant, adjust the timeout and context budget, and view the review log.
 
 ![AutoCode settings in OpenCode 2.0.28](https://raw.githubusercontent.com/expiracy/autocode/main/docs/assets/settings.png)
 
@@ -68,6 +68,39 @@ Try this harmless prompt in a new conversation:
 > Run exactly this shell command: `printf autocode-check`. Then report its output.
 
 With a working reviewer, the command should run automatically if the model approves it. A model can still ask for manual review; the permission prompt includes an `autocode:` explanation when AutoCode handles the request.
+
+## Commands and review log
+
+| Command | Opens |
+| --- | --- |
+| `/autocode config` | The global settings editor. |
+| `/autocode log` | Recent AutoCode reviews for the current project. |
+| `/autocode status` | The effective project settings, including overrides. |
+| `/autocode help` or `/autocode` | Command help. |
+
+These commands also appear in the command palette and remain available while
+automatic approval is disabled. `/autocode settings` is no longer an alias;
+use `/autocode config` to edit settings. None of these commands calls a model.
+
+The review log keeps the latest **100** reviews in OpenCode's durable plugin
+storage, scoped to the current project location. It survives restarts and settings
+reloads. Search verdicts, reasons, models, or sessions; select an entry for its
+timestamp, reviewer model and variant, duration, reason, and session ID. **Refresh**
+loads newer entries, and **Clear review log** removes this project's history after
+confirmation. The settings editor also has a **View review log** action.
+
+![AutoCode review details in OpenCode 2.0.28](https://raw.githubusercontent.com/expiracy/autocode/main/docs/assets/review-log.png)
+
+Entries record AutoCode's reviewer verdict or manual fallback. They do not prove
+that a command ran: OpenCode can still reject a reviewer-approved command through
+a hard policy. Requests already allowed or denied by OpenCode, non-shell requests,
+and requests made while AutoCode is disabled do not create review entries. The
+log starts recording after this version is loaded; it does not import old history.
+
+The log has no raw command, conversation, or provider-error payload fields.
+Reasons are limited to 1000 characters and may quote supplied context, so
+review them before sharing diagnostics. Logging failures do not delay or change
+permission decisions.
 
 ## How approval works
 
@@ -144,13 +177,15 @@ OpenCode reloads saved options for subsequent reviews. Project-specific plugin o
 
 | Symptom | What to check |
 | --- | --- |
-| `/autocode settings` or the palette entry is missing | Use OpenCode v2, confirm the global plugin registration loaded, and restart OpenCode including the terminal client. For a local checkout, run `npm ci` and `npm run build` first. |
+| `/autocode config` or the palette entry is missing | Use OpenCode v2, confirm the global plugin registration loaded, and restart OpenCode including the terminal client. For a local checkout, run `npm ci` and `npm run build` first. |
 | Commands run without a reviewer | Check that AutoCode is enabled and that OpenCode resolves the request to `ask`. Existing `allow` rules skip AutoCode. |
 | Commands remain blocked | Check permission denies and hard tool policies. AutoCode cannot override them. A reviewer may also deliberately return `deny`. |
 | The normal prompt remains | Read its `autocode:` explanation. Check the selected provider connection, model and variant, timeout, context budget, and availability of the full command and user context. |
 | The OpenCode free model rejects a review | Some free models reject isolated review requests even when they work as the coding model. Choose a separate connected reviewer in **Approval model**; keep your coding model selected. |
 | Saving says multiple registrations exist | Keep one global AutoCode registration, including across `opencode.json` and `opencode.jsonc`. Remove an old local-path registration when switching to the npm package. |
 | Saved settings seem ineffective in one project | Check that project's plugin options for an override. Confirm you are editing the config directory used by the running OpenCode instance. |
+| The log is empty | Only reviews made by this AutoCode version appear. Existing allow/deny decisions and requests while disabled skip review. Use **Refresh** after a new review and check that you are in the same project. |
+| A log entry says `allow`, but the command was blocked | The entry is AutoCode's verdict. OpenCode's hard policies can reject the command afterward. |
 
 If the problem persists, [open an issue](https://github.com/expiracy/autocode/issues) with your OpenCode and AutoCode versions, installation method, sanitized plugin options, and the relevant error. Remove credentials and private conversation content before sharing.
 
@@ -158,7 +193,7 @@ If the problem persists, [open an issue](https://github.com/expiracy/autocode/is
 
 The npm configuration above pins the beta version. After a newer version is published, change the package version in the registration and restart OpenCode. Review the [changelog](CHANGELOG.md) first. While using a local checkout, pull the desired revision, run `npm ci` and `npm run build`, then restart OpenCode.
 
-To pause automatic reviews, disable AutoCode in settings. To uninstall, remove its entry from the global `plugins` array and any project registrations, then restart OpenCode. Keep your permission rules and policies as needed for normal OpenCode approvals. Optional settings backups remain in `.autocode/settings-backups/` beside the global config.
+To pause automatic reviews, disable AutoCode in settings. To uninstall, clear any review history you want removed through `/autocode log`, remove its entry from the global `plugins` array and any project registrations, then restart OpenCode. Keep your permission rules and policies as needed for normal OpenCode approvals. Optional settings backups and OpenCode's plugin storage remain after removing a registration.
 
 ## Development and releases
 

@@ -7,7 +7,7 @@ export interface SettingsRpc {
   saveSettings(input: { revision: string; options: Record<string, unknown> }, options: { location: { directory: string }; signal: AbortSignal }): Promise<unknown>;
 }
 
-export async function editSettings(ctx: Context, rpc: SettingsRpc, current: () => boolean, signal: AbortSignal): Promise<void> {
+export async function editSettings(ctx: Context, rpc: SettingsRpc, current: () => boolean, signal: AbortSignal, onLog?: () => Promise<void>): Promise<void> {
   const active = () => !signal.aborted && current();
   if (!active()) return;
   const location = ctx.location ?? ctx.data.location.default();
@@ -35,6 +35,7 @@ export async function editSettings(ctx: Context, rpc: SettingsRpc, current: () =
         { title: "Context budget", value: "maxContextChars", description: `${effective.maxContextChars} characters` },
         { title: "Save settings", value: "save", disabled: !changed },
         { title: "Reset to defaults", value: "reset", description: "Enabled · inherit model · 30000 ms · 64000 characters" },
+        ...(onLog ? [{ title: "View review log", value: "log", category: "Diagnostics" }] : []),
         { title: "Close", value: "close", category: "Navigation" },
       ],
     });
@@ -47,7 +48,8 @@ export async function editSettings(ctx: Context, rpc: SettingsRpc, current: () =
       }
       return;
     }
-    if (selected === "enabled") draft.enabled = !effective.enabled;
+    if (selected === "log" && onLog) await onLog();
+    else if (selected === "enabled") draft.enabled = !effective.enabled;
     else if (selected === "model") await editModel(ctx, view, draft, active);
     else if (selected === "timeoutMs" || selected === "maxContextChars") await editNumber(ctx, draft, selected, active);
     else if (selected === "reset") for (const key of Object.keys(draft)) delete draft[key];

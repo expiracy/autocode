@@ -69,7 +69,8 @@ are for that later release:
 
 5. Verify registry metadata and the `next` tag. In a new isolated OpenCode profile,
    load `opencode-autocode@0.1.0-beta.1` directly by package name, open and save
-   `/autocode settings`, and run a harmless authorized `printf`. The prepublication
+   `/autocode config`, run a harmless authorized `printf`, and inspect its review
+   with `/autocode log`. The prepublication
    tarball checks cannot verify public registry name resolution before the package
    exists.
 6. Tag the source commit `v0.1.0-beta.1` and create matching GitHub release notes.

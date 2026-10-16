@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  // Merge into your GLOBAL OpenCode v2 configuration for /autocode settings.
+  // Merge into your GLOBAL OpenCode v2 configuration for /autocode config.
   // Release status: this beta has not been published to npm yet.
   "plugins": [
     {

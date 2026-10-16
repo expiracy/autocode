@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setupSettings, type SettingsState } from "../src/settings-server.ts";
+import type { ReviewLogEntry } from "../src/review-log.ts";
 
 type Context = Parameters<typeof setupSettings>[0];
 type HandlerContext = { error(type: string, message: string, data: unknown): unknown };
@@ -21,6 +22,7 @@ function harness() {
   const commands: Command[] = [];
   const events: Array<{ name: string; payload: unknown }> = [];
   const ctx = {
+    options: {} as Record<string, unknown>,
     rpc: {
       async register(definition: unknown, handlers: Record<string, Handler>) {
         registrations.push({ definition, handlers });
@@ -42,9 +44,15 @@ function harness() {
       return { ...state, revision: "revision-2", options };
     },
   };
+  const entries: ReviewLogEntry[] = [];
+  const log = {
+    async append() {},
+    async read() { return entries; },
+    async clear() { entries.splice(0); },
+  };
   return {
-    state, registrations, models, saves, commands, events, store,
-    async setup() { await setupSettings(ctx as unknown as Context, store); },
+    state, registrations, models, saves, commands, events, store, ctx, log, entries,
+    async setup(withLog = true) { await setupSettings(ctx as unknown as Context, store, withLog ? log : undefined); },
     async rawCall(method: string, input: Record<string, unknown> = {}) {
       const handler = registrations[0]?.handlers[method];
       assert.ok(handler, `Settings RPC registers ${method}`);
@@ -109,31 +117,52 @@ test("cannot save a reasoning variant the selected model does not support", asyn
   assert.deepEqual(h.saves, []);
 });
 
-test("the native settings command opens AutoCode settings for the originating session", async () => {
+test("the native config command opens AutoCode settings for the originating session", async () => {
   const h = harness();
   await h.setup();
-  await h.command("settings");
+  await h.command("config");
   assert.deepEqual(h.events, [{ name: "openSettings", payload: { sessionID: "session-1" } }]);
   assert.deepEqual(h.saves, []);
 });
 
-test("unknown native command arguments show the settings command usage", async () => {
+test("unknown native command arguments show the supported command usage", async () => {
   const h = harness();
   await h.setup();
-  await assert.rejects(h.command("enable everything"), /Usage: \/autocode settings/);
+  await assert.rejects(h.command("enable everything"), /Usage: \/autocode (?:<)?config\|log\|status\|help/);
   assert.deepEqual(h.events, []);
   assert.deepEqual(h.saves, []);
 });
 
-test("bare and config commands also open settings without saving", async () => {
+test("the bare command opens help without saving", async () => {
   const h = harness();
   await h.setup();
   await h.command("");
-  await h.command(" config ");
   assert.deepEqual(h.events, [
-    { name: "openSettings", payload: { sessionID: "session-1" } },
-    { name: "openSettings", payload: { sessionID: "session-1" } },
+    { name: "openHelp", payload: { sessionID: "session-1" } },
   ]);
+  assert.deepEqual(h.saves, []);
+});
+
+test("the removed settings alias points to the supported commands without opening settings", async () => {
+  const h = harness();
+  await h.setup();
+  await assert.rejects(h.command("settings"), /Usage: \/autocode <config\|log\|status\|help>/);
+  assert.deepEqual(h.events, []);
+});
+
+test("the log command opens the review log for the originating session", async () => {
+  const h = harness();
+  await h.setup();
+  await h.command(" log ");
+  assert.deepEqual(h.events, [{ name: "openLog", payload: { sessionID: "session-1" } }]);
+  assert.deepEqual(h.saves, []);
+});
+
+test("the status command opens effective AutoCode status for the originating session", async () => {
+  const h = harness();
+  await h.setup();
+  await h.command("STATUS");
+  assert.deepEqual(h.events, [{ name: "openStatus", payload: { sessionID: "session-1" } }]);
   assert.deepEqual(h.saves, []);
 });
 
@@ -183,4 +212,79 @@ test("can disable AutoCode while retaining an unavailable stored review model", 
   const options = { enabled: false, model };
   await h.call("saveSettings", { revision: h.state.revision, options });
   assert.deepEqual(h.saves, [{ revision: "revision-1", options }]);
+});
+
+test("status reports the current project options even when disabled without reading global settings or providers", async () => {
+  const h = harness();
+  h.ctx.options = {
+    enabled: false, model: { providerID: "project", id: "reviewer", variant: "low" },
+    timeoutMs: 12_000, maxContextChars: 42_000,
+  };
+  h.store.read = async () => { throw new Error("Must not read the global settings."); };
+  h.ctx.model.list = async () => { throw new Error("Must not query model providers."); };
+  await h.setup();
+  assert.deepEqual(await h.call("status"), { ...h.ctx.options, logLimit: 100 });
+});
+
+test("the log RPC returns recorded decisions with the history limit without querying settings or providers", async () => {
+  const h = harness();
+  h.entries.push({
+    id: "review-1", timestamp: "2026-10-16T12:00:00.000Z", sessionID: "session-1",
+    decision: "allow", reason: "Requested project test.", durationMs: 251,
+    model: { providerID: "connected", id: "reviewer", variant: "high" },
+  });
+  h.store.read = async () => { throw new Error("Must not read the global settings."); };
+  h.ctx.model.list = async () => { throw new Error("Must not query model providers."); };
+  await h.setup();
+  assert.deepEqual(await h.call("log"), { entries: h.entries, maxEntries: 100 });
+});
+
+test("clearLog removes the recent decisions without changing approval settings", async () => {
+  const h = harness();
+  h.entries.push({
+    id: "review-1", timestamp: "2026-10-16T12:00:00.000Z", sessionID: "session-1",
+    decision: "ask", reason: "Needs manual review.", durationMs: 100,
+  });
+  await h.setup();
+  assert.deepEqual(await h.call("clearLog"), { cleared: true });
+  assert.deepEqual(h.entries, []);
+  assert.deepEqual(h.saves, []);
+});
+
+test("log read failures return a declared diagnostic error without exposing storage details", async () => {
+  const h = harness();
+  h.log.read = async () => { throw new Error("storage failed: secret-token-123 /private/config"); };
+  await h.setup();
+  const message = "AutoCode review log is unavailable. Try reopening /autocode log or restart OpenCode.";
+  assert.deepEqual(await h.rawCall("log"), { type: "diagnostics_error", message, data: { message } });
+});
+
+test("log clear failures return a declared diagnostic error without exposing storage details", async () => {
+  const h = harness();
+  h.log.clear = async () => { throw new Error("storage failed: secret-token-123 /private/config"); };
+  await h.setup();
+  const message = "AutoCode could not clear the review log. Try again or restart OpenCode.";
+  assert.deepEqual(await h.rawCall("clearLog"), { type: "diagnostics_error", message, data: { message } });
+});
+
+test("log reads report an unavailable store through the declared diagnostic error", async () => {
+  const h = harness();
+  await h.setup(false);
+  const message = "AutoCode review log is unavailable. Try reopening /autocode log or restart OpenCode.";
+  assert.deepEqual(await h.rawCall("log"), { type: "diagnostics_error", message, data: { message } });
+});
+
+test("log clearing reports an unavailable store through the declared diagnostic error", async () => {
+  const h = harness();
+  await h.setup(false);
+  const message = "AutoCode could not clear the review log. Try again or restart OpenCode.";
+  assert.deepEqual(await h.rawCall("clearLog"), { type: "diagnostics_error", message, data: { message } });
+});
+
+test("status defaults to inheritance when no reviewer override is configured", async () => {
+  const h = harness();
+  await h.setup();
+  assert.deepEqual(await h.call("status"), {
+    enabled: true, timeoutMs: 30_000, maxContextChars: 64_000, logLimit: 100,
+  });
 });

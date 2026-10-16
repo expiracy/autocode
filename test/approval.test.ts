@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setupApproval } from "../src/approval.ts";
+import type { ReviewLogInput, ReviewLogSink } from "../src/review-log.ts";
 
 type Context = Parameters<typeof setupApproval>[0];
 type Evaluation = {
@@ -92,7 +93,7 @@ function harness(options: Record<string, unknown> = {}) {
       await hook?.(event);
       return event;
     },
-    async setup() { await setupApproval(ctx as unknown as Context); },
+    async setup(log?: ReviewLogSink) { await setupApproval(ctx as unknown as Context, log); },
   };
 }
 
@@ -103,6 +104,56 @@ test("reviews a pending command using the originating assistant's model and vari
   assert.equal(event.effect, "allow");
   assert.equal(h.requests.length, 1);
   assert.deepEqual(h.requests[0]?.model, { providerID: "provider", id: "active", variant: "medium" });
+});
+
+test("records the reviewer verdict, selected model, and timing without command or conversation data", async () => {
+  const h = harness();
+  const entries: ReviewLogInput[] = [];
+  await h.setup({ async append(entry) { entries.push(entry); } });
+  const event = await h.evaluate();
+  assert.equal(event.effect, "allow");
+  assert.equal(entries.length, 1);
+  const entry = entries[0]!;
+  assert.equal(entry.sessionID, "session-1");
+  assert.equal(entry.decision, "allow");
+  assert.equal(entry.reason, "The user requested running the tests.");
+  assert.deepEqual(entry.model, { providerID: "provider", id: "active", variant: "medium" });
+  assert.ok(Number.isFinite(entry.durationMs) && entry.durationMs >= 0);
+  assert.deepEqual(Object.keys(entry).sort(), ["decision", "durationMs", "model", "reason", "sessionID"]);
+  assert.doesNotMatch(JSON.stringify(entry), /npm test|Run the project's tests/);
+});
+
+test("records a provider failure as manual review without retaining its raw error", async () => {
+  const h = harness();
+  const entries: ReviewLogInput[] = [];
+  h.ctx.generate.text = async () => { throw new Error("Provider failed with credential sk-private-example"); };
+  await h.setup({ async append(entry) { entries.push(entry); } });
+  assert.equal((await h.evaluate()).effect, "ask");
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.decision, "ask");
+  assert.match(entries[0]?.reason ?? "", /Automatic review failed/);
+  assert.doesNotMatch(JSON.stringify(entries), /sk-private-example|Provider failed with credential/);
+});
+
+test("a stalled log write cannot delay the review decision", async () => {
+  const h = harness();
+  let attempts = 0;
+  await h.setup({ append() { attempts++; return new Promise(() => {}); } });
+  const event = await Promise.race([
+    h.evaluate(),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Logging blocked the review decision")), 100)),
+  ]);
+  assert.equal(event.effect, "allow");
+  assert.equal(attempts, 1);
+});
+
+test("a failed log write cannot replace an approval or its reason", async () => {
+  const h = harness();
+  await h.setup({ async append() { throw new Error("Log storage is unavailable"); } });
+  const event = await h.evaluate();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(event.effect, "allow");
+  assert.match(event.message ?? "", /The user requested running the tests/);
 });
 
 test("inherits the current coding model through an isolated native session review", async () => {
@@ -131,6 +182,7 @@ test("leaves existing allows, denies, and unrelated permission actions unchanged
 
 test("preserves a hard rejection and its reason without reading context or calling a model", async () => {
   const h = harness({ model: "provider/reviewer" });
+  const entries: ReviewLogInput[] = [];
   let reviewCalls = 0;
   const unexpectedReview = async () => {
     reviewCalls++;
@@ -141,7 +193,7 @@ test("preserves a hard rejection and its reason without reading context or calli
   h.ctx.session.generate = unexpectedReview;
   h.ctx.generate.text = unexpectedReview;
   h.ctx.model.default = unexpectedReview;
-  await h.setup();
+  await h.setup({ async append(entry) { entries.push(entry); } });
 
   const message = "Blocked by an OpenCode deny rule.";
   const event = await h.evaluate({ effect: "deny", message });
@@ -150,6 +202,7 @@ test("preserves a hard rejection and its reason without reading context or calli
   assert.equal(event.message, message);
   assert.equal(reviewCalls, 0);
   assert.equal(h.requests.length, 0);
+  assert.deepEqual(entries, []);
 });
 
 test("shows an explicit ask or deny verdict and its reason", async () => {
@@ -197,7 +250,7 @@ test("explains a free-provider rejection instead of calling it a timeout", async
   const event = await h.evaluate();
   assert.equal(event.effect, "ask");
   assert.match(event.message ?? "", /free.*provider|free.*model/i);
-  assert.match(event.message ?? "", /autocode settings/);
+  assert.match(event.message ?? "", /autocode config/);
   assert.doesNotMatch(event.message ?? "", /timed out/);
 });
 

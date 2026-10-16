@@ -1,7 +1,9 @@
 import type { Plugin } from "@opencode/plugin";
 import { parseOptions } from "./config.ts";
+import { parseAutoCodeCommand } from "./commands.ts";
 import { AutoCodeRpc } from "./rpc.ts";
 import type { SettingsSnapshot } from "./settings.ts";
+import { MAX_LOG_ENTRIES, type ReviewLogStore } from "./review-log.ts";
 
 export type SettingsState = SettingsSnapshot;
 
@@ -10,7 +12,7 @@ export interface SettingsStore {
   save(revision: string, options: Record<string, unknown>): Promise<SettingsState>;
 }
 
-export async function setupSettings(ctx: Plugin.Context, store: SettingsStore): Promise<void> {
+export async function setupSettings(ctx: Plugin.Context, store: SettingsStore, log?: ReviewLogStore): Promise<void> {
   const models = async () => (await ctx.model.list()).data
     .filter(model => model.enabled)
     .map(model => ({
@@ -48,15 +50,43 @@ export async function setupSettings(ctx: Plugin.Context, store: SettingsStore): 
         return context.error("settings_error", message, { message });
       }
     },
+    async status(_input, context) {
+      try { return { ...parseOptions(ctx.options), logLimit: MAX_LOG_ENTRIES }; }
+      catch {
+        const message = "AutoCode status is unavailable. Check the plugin configuration and reopen /autocode status.";
+        return context.error("diagnostics_error", message, { message });
+      }
+    },
+    async log(_input, context) {
+      try {
+        if (!log) throw new Error("Review log is unavailable.");
+        return { entries: await log.read(), maxEntries: MAX_LOG_ENTRIES };
+      } catch {
+        const message = "AutoCode review log is unavailable. Try reopening /autocode log or restart OpenCode.";
+        return context.error("diagnostics_error", message, { message });
+      }
+    },
+    async clearLog(_input, context) {
+      try {
+        if (!log) throw new Error("Review log is unavailable.");
+        await log.clear();
+        return { cleared: true };
+      } catch {
+        const message = "AutoCode could not clear the review log. Try again or restart OpenCode.";
+        return context.error("diagnostics_error", message, { message });
+      }
+    },
   });
   await ctx.command.transform(editor => editor.add({
     name: "autocode",
-    description: "Configure AutoCode automatic command approval",
+    description: "Configure AutoCode or inspect approval logs and status",
     async execute(input) {
-      if (!["", "settings", "config"].includes(input.prompt.text.trim().toLowerCase())) {
-        throw new Error("Usage: /autocode settings");
+      const command = parseAutoCodeCommand(input.prompt.text);
+      if (!command) {
+        throw new Error("Usage: /autocode <config|log|status|help>");
       }
-      await rpc.events.emit("openSettings", { sessionID: input.sessionID });
+      const event = { config: "openSettings", log: "openLog", status: "openStatus", help: "openHelp" } as const;
+      await rpc.events.emit(event[command], { sessionID: input.sessionID });
     },
   }));
 }

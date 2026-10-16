@@ -17,7 +17,7 @@ With an OpenCode v2 binary installed:
 npm run smoke
 ```
 
-The smoke test packs and installs AutoCode in a temporary global configuration, starts an isolated OpenCode server, and uses a local fake provider. It checks inherited and separate reviewers, hard rejection precedence, the settings command, model choices, and settings persistence. The fake reviewer always returns `allow`, so rejection checks test OpenCode's enforcement independently of model judgment.
+The smoke test packs and installs AutoCode in a temporary global configuration, starts an isolated OpenCode server, and uses a local fake provider. It checks inherited and separate reviewers, hard rejection precedence, config/log/status/help commands, model choices, settings persistence, and project-scoped review history. It also verifies that directory aliases share history and logging does not turn reviewer verdicts into execution guarantees. The fake reviewer always returns `allow`, so rejection checks test OpenCode's enforcement independently of model judgment.
 
 This test does not send model traffic to an external provider or change your installed configuration. It uses `~/.opencode/bin/opencode` when available, otherwise `opencode` on `PATH`. To select another binary:
 

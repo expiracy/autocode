@@ -1,9 +1,10 @@
 import type { Plugin } from "@opencode/plugin";
 import { resolve } from "node:path";
 import type { PermissionEvaluation } from "@opencode/plugin/promise/permission";
-import { parseOptions, type ResolvedOptions } from "./config.ts";
+import { parseOptions, type ApprovalModel, type ResolvedOptions } from "./config.ts";
 import { REVIEW_POLICY } from "./policy.ts";
 import { createSessionReviewer } from "./session-review.ts";
+import type { ReviewLogSink } from "./review-log.ts";
 
 type Decision = { decision: "allow" | "ask" | "deny"; reason: string };
 class ReviewTimeoutError extends Error {}
@@ -29,6 +30,7 @@ function parseDecision(text: string): Decision | undefined {
 async function review(
   ctx: Plugin.Context, event: PermissionEvaluation, options: ResolvedOptions, signal: AbortSignal,
   sessionReviewer: Awaited<ReturnType<typeof createSessionReviewer>>,
+  selectedModel: (model: ApprovalModel) => void,
 ): Promise<Decision | undefined> {
   const messages = await ctx.session.context({ sessionID: event.sessionID }, { signal });
   signal.throwIfAborted();
@@ -45,6 +47,7 @@ async function review(
     if (fallback.data) model = { providerID: fallback.data.providerID, id: fallback.data.id };
   }
   if (!model) return { decision: "ask", reason: "The approval model could not be resolved." };
+  selectedModel(model);
   const tool = origin?.type === "assistant"
     ? origin.content.find((part) => part.type === "tool" && part.id === event.source?.id)
     : undefined;
@@ -89,14 +92,18 @@ async function withDeadline<T>(ms: number, run: (signal: AbortSignal) => Promise
   }
 }
 
-export async function setupApproval(ctx: Plugin.Context): Promise<void> {
+export async function setupApproval(ctx: Plugin.Context, log?: ReviewLogSink): Promise<void> {
   const options = parseOptions(ctx.options);
   if (!options.enabled) return;
   const sessionReviewer = await createSessionReviewer(ctx);
   await ctx.permission.hook("evaluate", async (event) => {
     if (event.effect !== "ask" || event.action !== "shell") return;
+    const started = performance.now();
+    let model: ApprovalModel | undefined;
     try {
-      const decision = await withDeadline(options.timeoutMs, (signal) => review(ctx, event, options, signal, sessionReviewer));
+      const decision = await withDeadline(options.timeoutMs, (signal) => review(ctx, event, options, signal, sessionReviewer, (selected) => {
+        model = { providerID: selected.providerID, id: selected.id, ...(selected.variant ? { variant: selected.variant } : {}) };
+      }));
       if (decision) {
         event.effect = decision.decision;
         event.message = `autocode: ${decision.reason}`;
@@ -105,11 +112,23 @@ export async function setupApproval(ctx: Plugin.Context): Promise<void> {
       }
     } catch (error) {
       if (error instanceof Error && error.message.includes("OpenCode's free tier can only be used from within OpenCode")) {
-        event.message = "autocode: The OpenCode free model rejected this review request. Choose a separate approval model in /autocode settings, or review this command manually.";
+        event.message = "autocode: The OpenCode free model rejected this review request. Choose a separate approval model in /autocode config, or review this command manually.";
       } else if (error instanceof ReviewTimeoutError) {
         event.message = `autocode: Automatic review timed out after ${options.timeoutMs} ms; please review this command.`;
       } else {
         event.message = "autocode: Automatic review failed; please review this command.";
+      }
+    } finally {
+      if (log) {
+        // Diagnostics must never delay or change a permission decision.
+        try {
+          void log.append({
+            sessionID: event.sessionID, decision: event.effect,
+            reason: event.message?.replace(/^autocode:\s*/, "") ?? "Manual review required.",
+            durationMs: Math.max(0, Math.round(performance.now() - started)),
+            ...(model ? { model } : {}),
+          }).catch(() => {});
+        } catch {}
       }
     }
   });

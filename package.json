@@ -51,6 +51,7 @@
     "CONTRIBUTING.md",
     "RELEASING.md",
     "docs/assets/settings.png",
+    "docs/assets/review-log.png",
     "examples"
   ],
   "scripts": {

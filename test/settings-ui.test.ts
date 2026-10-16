@@ -151,7 +151,7 @@ test("shows an unavailable message when global settings cannot be read", async (
   assert.deepEqual(h.saves, []);
 });
 
-test("registers AutoCode settings in the native command palette and slash completion", async () => {
+test("registers AutoCode config in the native command palette and slash completion", async () => {
   const h = harness([undefined]);
   const layers: KeymapLayer[] = [];
   const ctx = {
@@ -161,35 +161,44 @@ test("registers AutoCode settings in the native command palette and slash comple
     data: { ...h.ctx.data, on() { return () => {}; } },
   } as unknown as Context;
   const cleanup = await tui.setup(ctx);
-  const command = layers[0]?.commands?.find(command => command.id === "autocode.settings");
-  assert.equal(command?.title, "AutoCode settings");
+  const command = layers[0]?.commands?.find(command => command.id === "autocode.config");
+  assert.equal(command?.title, "AutoCode config");
   assert.equal(command?.palette, true);
   assert.equal(command?.slash?.name, "autocode");
   assert.equal(command?.slash?.arguments, true);
-  await command?.run("settings");
+  await command?.run("config");
   assert.equal(h.menus.length, 1);
   if (cleanup) await cleanup();
 });
 
-test("handles the native server command only for the visible session and unsubscribes on disposal", async () => {
-  const h = harness([undefined]);
-  let listener: ((event: { data: { sessionID: string } }) => void | Promise<void>) | undefined;
-  let unsubscribed = false;
+test("handles native server commands only for the visible session and unsubscribes on disposal", async () => {
+  const h = harness([undefined, "close"]);
+  const requests: string[] = [];
+  const listeners = new Map<string, (event: { data: { sessionID: string } }) => void | Promise<void>>();
+  const unsubscribed: string[] = [];
   const ctx = {
     ...h.ctx,
     ui: { ...h.ctx.ui, router: { current() { return { type: "session", sessionID: "visible" }; } } },
     keymap: { layer() {} },
-    client: { rpc() { return { ...h.rpc, events: { on(name: string, callback: typeof listener) { assert.equal(name, "openSettings"); listener = callback; return () => { unsubscribed = true; }; } } }; } },
+    client: { rpc() { return { ...h.rpc,
+      async log() { requests.push("log"); return { entries: [], maxEntries: 100 }; },
+      async status() { requests.push("status"); return { enabled: false, timeoutMs: 30000, maxContextChars: 64000, logLimit: 100 }; },
+      events: { on(name: string, callback: (event: { data: { sessionID: string } }) => void | Promise<void>) { listeners.set(name, callback); return () => { unsubscribed.push(name); }; } } }; } },
     data: { ...h.ctx.data, on() { return () => {}; } },
   } as unknown as Context;
   const cleanup = await tui.setup(ctx);
-  assert.ok(listener);
-  await listener({ data: { sessionID: "different" } });
+  assert.deepEqual([...listeners.keys()], ["openSettings", "openLog", "openStatus", "openHelp"]);
+  for (const listener of listeners.values()) await listener({ data: { sessionID: "different" } });
   assert.equal(h.menus.length, 0);
-  await listener({ data: { sessionID: "visible" } });
-  assert.equal(h.menus.length, 1);
+  assert.equal(h.alerts.length, 0);
+  assert.deepEqual(requests, []);
+  for (const listener of listeners.values()) await listener({ data: { sessionID: "visible" } });
+  assert.equal(h.menus.length, 2);
+  assert.equal(h.loads.length, 1);
+  assert.deepEqual(requests, ["log", "status"]);
+  assert.deepEqual(h.alerts.map(alert => alert.title), ["AutoCode status", "AutoCode commands"]);
   if (cleanup) await cleanup();
-  assert.equal(unsubscribed, true);
+  assert.deepEqual(unsubscribed.sort(), [...listeners.keys()].sort());
 });
 
 test("closing the TUI companion aborts its open draft and prevents a late Save", async () => {
@@ -271,8 +280,8 @@ test("settings remains discoverable while the command palette owns modal input",
   // OpenCode's dialog host pushes modal input; omitted layer modes require base input.
   const modalCommands = layers.filter(layer => layer.mode === "global" || layer.mode === "modal")
     .flatMap(layer => layer.commands ?? []).filter(command => command.palette);
-  const settings = modalCommands.find(command => command.title === "AutoCode settings");
-  assert.ok(settings, "AutoCode settings is reachable from the open palette");
+  const settings = modalCommands.find(command => command.title === "AutoCode config");
+  assert.ok(settings, "AutoCode config is reachable from the open palette");
   await settings.run();
   assert.equal(h.menus.length, 1);
   if (cleanup) await cleanup();
@@ -295,4 +304,87 @@ test("approval model search matches raw provider/model IDs and case-insensitive 
   } } } } as unknown as Context;
   await editSettings(ctx, h.rpc, () => true, h.controller.signal);
   assert.deepEqual(h.saves, []);
+});
+
+test("opens the review log from config and returns to the unsaved draft without saving", async () => {
+  const h = harness(["enabled", "log", "save"]);
+  let visits = 0;
+  await editSettings(h.ctx, h.rpc, () => true, h.controller.signal, async () => {
+    visits++;
+    assert.deepEqual(h.saves, []);
+  });
+  assert.ok(h.menus[0]?.options.some(option => option.value === "log" && option.title === "View review log"));
+  assert.equal(visits, 1);
+  assert.equal(h.menus[2]?.options.find(option => option.value === "enabled")?.description, "Disabled");
+  assert.deepEqual(h.saves, [{ revision: "revision-1", options: { enabled: false } }]);
+  assert.equal(h.loads.length, 1);
+});
+
+test("routes canonical subcommands and palette diagnostics through one slash command", async () => {
+  const h = harness(["close", "close"]);
+  const calls: string[] = [];
+  let layer: KeymapLayer | undefined;
+  const ctx = {
+    ...h.ctx,
+    keymap: { layer(factory: () => KeymapLayer) { layer = factory(); } },
+    client: { rpc() { return { ...h.rpc,
+      async log() { calls.push("log"); return { entries: [], maxEntries: 100 }; },
+      async status() { calls.push("status"); return { enabled: true, timeoutMs: 30000, maxContextChars: 64000, logLimit: 100 }; },
+      events: { on() { return () => {}; } },
+    }; } },
+    data: { ...h.ctx.data, on() { return () => {}; } },
+  } as unknown as Context;
+  const cleanup = await tui.setup(ctx);
+  const command = layer?.commands?.find(command => command.id === "autocode.config");
+  assert.ok(command);
+  await command.run("/autocode");
+  assert.equal(h.alerts[0]?.title, "AutoCode commands");
+  assert.equal(h.loads.length, 0);
+  await command.run("settings");
+  assert.match(h.alerts[1]?.message ?? "", /Unknown AutoCode command/);
+  assert.equal(h.loads.length, 0);
+  await command.run("log");
+  await command.run("status");
+  await command.run("config");
+  assert.deepEqual(calls, ["log", "status"]);
+  assert.equal(h.menus[0]?.title, "AutoCode review log");
+  assert.equal(h.menus[1]?.title, "AutoCode settings");
+  assert.equal(h.loads.length, 1);
+  assert.deepEqual(layer?.commands?.filter(command => command.palette).map(command => command.id), ["autocode.config", "autocode.log", "autocode.status", "autocode.help"]);
+  assert.equal(layer?.commands?.filter(command => command.slash).length, 1);
+  if (cleanup) await cleanup();
+});
+
+test("shares the dialog lifecycle guard across config and log loads", async () => {
+  const h = harness(["close"]);
+  let layer: KeymapLayer | undefined;
+  let reconnect: (() => void) | undefined;
+  let release: ((value: unknown) => void) | undefined;
+  let logSignal: AbortSignal | undefined;
+  let cleared = 0;
+  const ctx = {
+    ...h.ctx,
+    ui: { ...h.ctx.ui, dialog: { ...h.ctx.ui.dialog, clear() { cleared++; } } },
+    keymap: { layer(factory: () => KeymapLayer) { layer = factory(); } },
+    client: { rpc() { return { ...h.rpc,
+      async log(_input: unknown, request: { signal: AbortSignal }) { logSignal = request.signal; return new Promise(resolve => { release = resolve; }); },
+      events: { on() { return () => {}; } },
+    }; } },
+    data: { ...h.ctx.data, on(_name: string, callback: () => void) { reconnect = callback; return () => {}; } },
+  } as unknown as Context;
+  const cleanup = await tui.setup(ctx);
+  const log = layer?.commands?.find(command => command.id === "autocode.log");
+  const config = layer?.commands?.find(command => command.id === "autocode.config");
+  const pending = log?.run();
+  await config?.run();
+  assert.equal(h.loads.length, 0, "A second dialog cannot replace an in-flight log");
+  reconnect?.();
+  assert.equal(logSignal?.aborted, true);
+  assert.equal(cleared, 1);
+  release?.({ entries: [], maxEntries: 100 });
+  await pending;
+  assert.equal(h.menus.length, 0);
+  await config?.run();
+  assert.equal(h.menus.length, 1, "A new dialog can open after reconnection");
+  if (cleanup) await cleanup();
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { once } from "node:events";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -302,7 +302,7 @@ try {
       action: "shell", resources: ["printf smoke-check"],
       source: { type: "tool", messageID: importedAssistant.id, id: importedCall.id },
     };
-    approvalFixtures[mode] = { sessionID: session.id, permission };
+    approvalFixtures[mode] = { sessionID: session.id, permission, model: importedAssistant.model };
     const requestCount = requests.length;
     const { data: decision } = await api(`/api/session/${session.id}/permission`, permission);
     if (decision.effect !== "allow") {
@@ -334,8 +334,10 @@ try {
   assert.deepEqual((await api(`/api/session/${liveSession.id}/permission`)).data, []);
   console.log("live call: real shell permission auto-approved and printf completed in the temporary directory.");
 
-  const settingsQuery = `location%5Bdirectory%5D=${encodeURIComponent(projects.inherit)}`;
-  const rpc = async (method, input) => (await api(`/api/rpc/autocode/${method}?${settingsQuery}`, { input })).output;
+  const rpc = async (method, input, directory = projects.inherit) => {
+    const locationQuery = `location%5Bdirectory%5D=${encodeURIComponent(directory)}`;
+    return (await api(`/api/rpc/autocode/${method}?${locationQuery}`, { input })).output;
+  };
   const settings = await rpc("settings", {});
   assert.equal(settings.path, globalConfig);
   assert.deepEqual(settings.options, {});
@@ -347,14 +349,69 @@ try {
   const reviewer = settings.models.find((candidate) => candidate.providerID === "smoke" && candidate.id === "reviewer");
   assert.ok(reviewer?.variants.includes("high"), "Settings must offer connected models and their variants.");
 
-  async function openSettings() {
+  const initialLog = await rpc("log", {});
+  assert.equal(initialLog.maxEntries, 100);
+  assert.equal(initialLog.entries.length, 2, "The imported review and actual shell review must both be persisted.");
+  assert.deepEqual(initialLog.entries.map((entry) => entry.sessionID).sort(),
+    [approvalFixtures.inherit.sessionID, liveSession.id].sort());
+  const reviewModels = new Map([
+    [approvalFixtures.inherit.sessionID, approvalFixtures.inherit.model],
+    [liveSession.id, liveMessages.find((message) => message.type === "assistant"
+      && message.content.some((part) => part.type === "tool" && part.id === "call_live_smoke")).model],
+  ]);
+  for (const entry of initialLog.entries) {
+    assert.deepEqual(Object.keys(entry).sort(),
+      ["decision", "durationMs", "id", "model", "reason", "sessionID", "timestamp"],
+      "Review history must contain metadata only, without raw commands, conversation, or provider errors.");
+    assert.equal(entry.decision, "allow");
+    assert.equal(entry.reason, "Local smoke test approval.");
+    assert.deepEqual(entry.model, reviewModels.get(entry.sessionID), "History must identify the originating model and variant that actually reviewed the command.");
+    assert.ok(Number.isFinite(entry.durationMs) && entry.durationMs >= 0);
+    assert.equal(new Date(entry.timestamp).toISOString(), entry.timestamp);
+    assert.match(entry.id, /^[0-9a-f-]{36}$/);
+  }
+  assert.equal(new Set(initialLog.entries.map((entry) => entry.id)).size, 2);
+  console.log("diagnostics: native review history persists actual decisions, model, timing and bounded metadata without command or conversation fields.");
+
+  const beforeDiagnostics = requests.length;
+  const aliasDirectory = path.join(temporary, "inherit-alias");
+  await symlink(projects.inherit, aliasDirectory, "dir");
+  const aliasQuery = `location%5Bdirectory%5D=${encodeURIComponent(aliasDirectory)}`;
+  const aliasLoadedBy = Date.now() + 10_000;
+  let aliasPlugin;
+  do {
+    aliasPlugin = (await api(`/api/plugin?${aliasQuery}`)).data.find((candidate) => candidate.id === "autocode");
+    if (aliasPlugin?.state.status === "active") break;
+    await delay(100);
+  } while (Date.now() < aliasLoadedBy);
+  assert.equal(aliasPlugin?.state.status, "active", "AutoCode must load through the project's directory alias.");
+  assert.deepEqual(await rpc("log", {}, aliasDirectory), initialLog,
+    "Directory aliases must expose the same persisted review history as the canonical project path.");
+  assert.deepEqual(await rpc("status", {}, aliasDirectory), await rpc("status", {}));
+  assert.deepEqual(await rpc("status", {}), {
+    enabled: true, timeoutMs: 30_000, maxContextChars: 64_000, logLimit: 100,
+  });
+  assert.deepEqual(await rpc("status", {}, projects.override), {
+    enabled: true, model: { providerID: "smoke", id: "reviewer" },
+    timeoutMs: 30_000, maxContextChars: 64_000, logLimit: 100,
+  }, "Status must report this project's effective options, including its reviewer override.");
+  assert.deepEqual((await rpc("log", {}, projects.override)).entries.map((entry) => entry.sessionID),
+    [approvalFixtures.override.sessionID], "Each project's history must exclude other projects' reviews.");
+  assert.deepEqual(await rpc("clearLog", {}, projects.override), { cleared: true });
+  assert.deepEqual((await rpc("log", {}, projects.override)).entries, []);
+  assert.deepEqual((await rpc("log", {})).entries, initialLog.entries,
+    "Clearing the current project's history must preserve another project's history.");
+  assert.equal(requests.length, beforeDiagnostics, "Reading status/history and clearing history must not call a model.");
+  console.log("diagnostics: directory aliases share history, status reflects project options, and clearing one project preserves another.");
+
+  async function openAutoCode(text, eventName) {
     // Subscribe before invoking the command so the ephemeral UI event cannot be missed.
     const eventController = new AbortController();
     const eventResponse = await fetch(baseURL + "/api/event", {
       headers, signal: AbortSignal.any([eventController.signal, AbortSignal.timeout(15_000)]),
     });
     assert.ok(eventResponse.ok);
-    const settingsEvent = (async () => {
+    const commandEvent = (async () => {
       const decoder = new TextDecoder();
       let buffer = "";
       for await (const chunk of eventResponse.body) {
@@ -366,23 +423,33 @@ try {
           const data = frame.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
           if (!data) continue;
           const event = JSON.parse(data);
-          if (event.type === "rpc.autocode.openSettings") return event;
+          if (event.type === `rpc.autocode.${eventName}` && event.data.sessionID === liveSession.id) return event;
         }
       }
-      throw new Error("The AutoCode settings command did not emit its UI event.");
+      throw new Error(`The AutoCode ${text || "help"} command did not emit its UI event.`);
     })();
-    const beforeSettings = requests.length;
+    const beforeCommand = requests.length;
     try {
-      await api(`/api/session/${liveSession.id}/command`, { name: "autocode", text: "settings" });
-      const event = await settingsEvent;
+      await api(`/api/session/${liveSession.id}/command`, { name: "autocode", text });
+      const event = await commandEvent;
       assert.equal(event.data.sessionID, liveSession.id);
-      assert.equal(requests.length, beforeSettings, "Opening settings must not prompt the coding model.");
+      assert.equal(requests.length, beforeCommand, "AutoCode commands must not prompt the coding model.");
     } finally {
       eventController.abort();
-      await settingsEvent.catch(() => {});
+      await commandEvent.catch(() => {});
     }
   }
-  await openSettings();
+  async function assertAutoCodeCommands() {
+    for (const [text, eventName] of [
+      ["config", "openSettings"], ["log", "openLog"], ["status", "openStatus"],
+      ["help", "openHelp"], ["", "openHelp"],
+    ]) await openAutoCode(text, eventName);
+    const beforeRemovedCommand = requests.length;
+    await assert.rejects(api(`/api/session/${liveSession.id}/command`, { name: "autocode", text: "settings" }),
+      /Usage: \/autocode <config\|log\|status\|help>/, "The removed settings subcommand must be rejected.");
+    assert.equal(requests.length, beforeRemovedCommand, "An invalid AutoCode command must not prompt the coding model.");
+  }
+  await assertAutoCodeCommands();
 
   async function waitForApprovalMode(mode, effect, selectedModel) {
     const fixture = approvalFixtures[mode];
@@ -416,7 +483,15 @@ try {
   assert.equal(persisted.model, "smoke/inherited", "Saving plugin settings must preserve the coding model.");
   assert.ok(persisted.providers.smoke, "Saving plugin settings must preserve provider configuration.");
   await waitForApprovalMode("inherit", "ask");
-  await openSettings();
+  await assertAutoCodeCommands();
+  assert.deepEqual(await rpc("status", {}), {
+    ...selectedOptions, logLimit: 100,
+  }, "Status must reflect saved disabled settings after OpenCode reloads the plugin.");
+  const disabledLog = await rpc("log", {});
+  for (const entry of initialLog.entries) {
+    assert.deepEqual(disabledLog.entries.find((candidate) => candidate.id === entry.id), entry,
+      "Existing review history must survive reload and remain readable while AutoCode is disabled.");
+  }
   await waitForApprovalMode("override", "allow", "reviewer");
   const inherited = await rpc("saveSettings", {
     revision: saved.revision,
@@ -424,7 +499,9 @@ try {
   });
   assert.equal(inherited.effective.model, undefined);
   await waitForApprovalMode("inherit", "allow", "inherited");
-  console.log("settings: models/variants listed, /autocode opens while disabled, global choices persisted and live approvals updated; project override preserved.");
+  console.log("commands: /autocode config, log, status, help and bare help emit UI events while enabled or disabled, without model calls; removed settings command rejected.");
+  console.log("settings: models/variants listed, global choices persisted and live approvals updated; project override preserved.");
+  console.log("diagnostics: saved status and existing history remain available after plugin reload while automatic review is disabled.");
 
   async function shellFixture(directory, command, permissions) {
     const location = { directory };
@@ -455,10 +532,21 @@ try {
     } };
   }
   const blocked = await shellFixture(projects.hardReject, "printf smoke-blocked");
+  const hardRejectQuery = `location%5Bdirectory%5D=${encodeURIComponent(projects.hardReject)}`;
+  const hardRejectLoadedBy = Date.now() + 10_000;
+  let hardRejectPlugin;
+  do {
+    hardRejectPlugin = (await api(`/api/plugin?${hardRejectQuery}`)).data.find((candidate) => candidate.id === "autocode");
+    if (hardRejectPlugin?.state.status === "active") break;
+    await delay(100);
+  } while (Date.now() < hardRejectLoadedBy);
+  assert.equal(hardRejectPlugin?.state.status, "active", "AutoCode must be active before hard-rejection coverage runs.");
   const beforeBlocked = requests.length;
   assert.equal((await api(`/api/session/${blocked.sessionID}/permission`, blocked.permission)).data.effect, "deny");
   assert.equal(requests.length, beforeBlocked, "A configured deny must bypass the approval model.");
   assert.deepEqual((await api(`/api/session/${blocked.sessionID}/permission`)).data, [], "A configured deny must not create an approval prompt.");
+  assert.deepEqual((await rpc("log", {}, projects.hardReject)).entries, [],
+    "A configured deny must not be recorded as an AutoCode review.");
   console.log("hard reject: a configured deny blocks the command before model review or prompting.");
   const compound = await shellFixture(projects.hardReject, "printf smoke-allowed; printf smoke-blocked");
   compound.permission.resources = ["printf smoke-allowed", "printf smoke-blocked"];
@@ -466,6 +554,7 @@ try {
   assert.equal((await api(`/api/session/${compound.sessionID}/permission`, compound.permission)).data.effect, "deny");
   assert.equal(requests.length, beforeCompound, "One denied resource must block the whole compound command before model review.");
   assert.deepEqual((await api(`/api/session/${compound.sessionID}/permission`)).data, []);
+  assert.deepEqual((await rpc("log", {}, projects.hardReject)).entries, []);
   console.log("hard reject: a denied resource blocks the whole compound command.");
   const disabledForSavedApproval = await rpc("saveSettings", {
     revision: inherited.revision, options: { ...inherited.options, enabled: false },
@@ -490,10 +579,13 @@ try {
   const deniedAfterSaved = await shellFixture(projects.inherit, savedCommand, [
     { action: "shell", resource: savedCommand, effect: "deny" },
   ]);
+  const beforeSavedHistory = await rpc("log", {});
   const beforeSavedDeny = requests.length;
   assert.equal((await api(`/api/session/${deniedAfterSaved.sessionID}/permission`, deniedAfterSaved.permission)).data.effect, "deny");
   assert.equal(requests.length, beforeSavedDeny, "A configured deny must beat a persisted Allow always rule without model review.");
   assert.deepEqual((await api(`/api/session/${deniedAfterSaved.sessionID}/permission`)).data, []);
+  assert.deepEqual(await rpc("log", {}), beforeSavedHistory,
+    "Configured denies must leave AutoCode history unchanged, including conflicts with saved approvals.");
   console.log("hard reject: configured deny wins over a verified native Allow always approval.");
   const policyBlocked = await shellFixture(projects.hardReject, "printf smoke-policy");
   const beforePolicy = requests.length;
@@ -501,6 +593,12 @@ try {
   assert.equal(requests.length, beforePolicy + 1, "The policy must override an actual allow from the local approval reviewer.");
   assert.ok(!requests.at(-1).tools?.length);
   assert.deepEqual((await api(`/api/session/${policyBlocked.sessionID}/permission`)).data, [], "A policy deny must not create an approval prompt.");
+  const policyHistory = await rpc("log", {}, projects.hardReject);
+  assert.equal(policyHistory.entries.length, 1);
+  assert.equal(policyHistory.entries[0].sessionID, policyBlocked.sessionID);
+  assert.equal(policyHistory.entries[0].decision, "allow",
+    "History records the reviewer's allow verdict, even when OpenCode's later policy denies the request.");
+  assert.equal(policyHistory.entries[0].reason, "Local smoke test approval.");
   console.log("hard reject: protected tool.use policy overrides an automatic model approval.");
 
   async function assertRejectedShell({ marker, toolID, outputFile, reviewCount, reason }) {
@@ -521,17 +619,25 @@ try {
       JSON.stringify(message.content).includes("REVIEW_DATA_JSON")));
     assert.equal(reviews.length, reviewCount);
     assert.deepEqual((await api(`/api/session/${session.id}/permission`)).data, []);
+    return session.id;
   }
   await assertRejectedShell({
     marker: "LIVE_HARD_REJECT", toolID: "call_live_hard_reject", outputFile: ".autocode-hard-reject-marker",
     reviewCount: 0, reason: /Permission denied/,
   });
+  assert.deepEqual(await rpc("log", {}, projects.hardReject), policyHistory,
+    "An actually blocked configured-deny tool call must not create a review record.");
   console.log("hard reject: configured-denied shell tool failed without review and never created its printf marker.");
-  await assertRejectedShell({
+  const policyExecutionSessionID = await assertRejectedShell({
     marker: "LIVE_POLICY_REJECT", toolID: "call_live_policy_reject", outputFile: ".autocode-policy-reject-marker",
     reviewCount: 1, reason: /Blocked by configuration policy/,
   });
+  const finalPolicyHistory = await rpc("log", {}, projects.hardReject);
+  assert.equal(finalPolicyHistory.entries.length, 2);
+  assert.equal(finalPolicyHistory.entries.find((entry) => entry.sessionID === policyExecutionSessionID)?.decision, "allow",
+    "A failed shell execution after a policy block must retain the actual review verdict, not pretend the reviewer denied it.");
   console.log("hard reject: policy-denied shell tool failed despite the model's approval and never created its printf marker.");
+  console.log("diagnostics: configured denies create no review records; protected-policy blocks retain the model's allow verdict without claiming successful execution.");
   console.log("Smoke test passed; all model traffic stayed on the local fake provider.");
 } catch (error) {
   const logFiles = (await readdir(temporary, { recursive: true })).filter((name) =>
