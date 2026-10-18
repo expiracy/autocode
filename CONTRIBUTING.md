@@ -33,10 +33,15 @@ npm run smoke:registry
 ```
 
 This downloads package dependencies from npm and runs the same native scenarios.
-The unpublished plugin is installed from its local tarball, and all model traffic
+The plugin under test is installed from its local tarball, and all model traffic
 still uses the local fake provider. `npm run release:check` combines project checks,
 this installation check, and a package contents preview. CI runs checks on Node.js
 22 and 24 and native installation on Linux and macOS with OpenCode 2.0.28.
+
+After publishing the manifest version, verify the actual npm package and OpenCode's
+registry loader with `npm run smoke:published`. This uses fresh npm and OpenCode
+caches, installs by the exact package name and version, and runs the native suite
+without using this checkout's built files or your provider connections.
 
 ## Opt-in real provider validation
 
@@ -52,6 +57,6 @@ This check makes real model calls and incurs normal provider costs. It reads the
 
 ## Packaging and releases
 
-Run `npm pack --dry-run` to inspect the package contents; the prepack hook builds the distributable. Use the [release checklist](RELEASING.md) before publishing. The current beta is prepared but has not been published.
+Run `npm pack --dry-run` to inspect the package contents; the prepack hook builds the distributable. Use the [release checklist](RELEASING.md) before publishing. Beta releases use the npm `next` tag.
 
 Submit focused changes through [GitHub](https://github.com/expiracy/autocode). Include what changed and the checks you actually ran. Contributions use the project's [MIT license](LICENSE).

@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.1.0-beta.1 — Unreleased
+## 0.1.0-beta.1 — 2026-10-18
 
-First planned npm release, published as `opencode-autocode` with the AutoCode
+First npm release as `opencode-autocode`, using the `next` distribution tag, with the AutoCode
 plugin ID and `/autocode config` command. Tested with OpenCode 2.0.28.
 
 - Review individual pending shell commands with the proposing model and variant,
@@ -21,6 +21,3 @@ plugin ID and `/autocode config` command. Tested with OpenCode 2.0.28.
 - Provide bounded, tool-free reviews without truncating command or conversation
   evidence.
 - Distribute built JavaScript and type declarations under the MIT licence.
-
-This version has not been published to npm. The planned distribution tag is
-`next`; local checkout installation remains available before publication.

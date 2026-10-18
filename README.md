@@ -2,15 +2,15 @@
 
 Model-based shell command approval for OpenCode v2. AutoCode reviews commands that would otherwise need your approval, using the coding model by default or a separate model you choose. Configure it from `/autocode config` without changing your coding model, and inspect recent reviews with `/autocode log`.
 
-**Release status:** `opencode-autocode@0.1.0-beta.1` is being prepared and has **not been published to npm**. You can [use a local checkout](#use-a-local-checkout-now) today.
+**Beta release:** [`opencode-autocode@0.1.0-beta.1`](https://www.npmjs.com/package/opencode-autocode/v/0.1.0-beta.1). Beta releases use the npm `next` tag; the configuration below pins this version.
 
 Tested with **OpenCode 2.0.28** and its v2 plugin API. OpenCode v1 is not supported.
 
 ## Install
 
-### From npm, after publication
+### From npm
 
-Once the beta is published, merge this registration into your global `~/.config/opencode/opencode.jsonc` or `opencode.json`. OpenCode installs the package from the `plugins` entry; a separate `npm install -g` is unnecessary.
+Merge this registration into your global `~/.config/opencode/opencode.jsonc` or `opencode.json`. OpenCode installs the package from the `plugins` entry; a separate `npm install -g` is unnecessary.
 
 ```jsonc
 {
@@ -26,9 +26,9 @@ Once the beta is published, merge this registration into your global `~/.config/
 
 Use your configured OpenCode config directory if it differs from the default. Keep one global AutoCode registration so its settings dialog can find it.
 
-### Use a local checkout now
+### Use a local checkout
 
-Build with **Node.js 22.18 or newer** and npm:
+For local development or to try a specific source revision, build with **Node.js 22.18 or newer** and npm:
 
 ```sh
 git clone https://github.com/expiracy/autocode.git

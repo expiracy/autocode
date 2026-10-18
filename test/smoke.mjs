@@ -13,10 +13,14 @@ import { randomUUID } from "node:crypto";
 // Build first: npm run build && node test/smoke.mjs
 // Add --registry-install to resolve the packed package's dependencies from npm
 // in an empty cache, without peer-dependency bypasses or seeded packages.
+// After publication, --published-package installs the exact manifest version
+// from npm and asks OpenCode to load that registry package by name as well.
 const exec = promisify(execFile);
 const repository = fileURLToPath(new URL("..", import.meta.url));
 const registryInstall = process.argv.includes("--registry-install");
-assert.ok(process.argv.slice(2).every((argument) => argument === "--registry-install"), "Unknown smoke-test option.");
+const publishedPackage = process.argv.includes("--published-package");
+assert.ok(process.argv.slice(2).every((argument) => ["--registry-install", "--published-package"].includes(argument)), "Unknown smoke-test option.");
+assert.ok(!(registryInstall && publishedPackage), "Choose either a local tarball or the published package.");
 const temporary = await mkdtemp(path.join(tmpdir(), "autocode-smoke-"));
 const serverPassword = randomUUID();
 const requests = [];
@@ -91,7 +95,6 @@ async function stopChild() {
 }
 
 try {
-  await access(path.join(repository, "dist/index.js"));
   const npmConfig = path.join(temporary, "npmrc");
   const globalNpmConfig = path.join(temporary, "global-npmrc");
   await writeFile(npmConfig, "");
@@ -100,24 +103,34 @@ try {
     "--registry", "https://registry.npmjs.org"];
   const npmEnvironment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
     !/^(?:npm_config_|npm_token$|node_auth_token$)/i.test(name)));
-  const { stdout } = await exec("npm", [
-    "pack", ...npmFlags, "--ignore-scripts", "--json", "--pack-destination", temporary,
-  ], { cwd: repository, env: npmEnvironment, timeout: 30_000 });
-  const [{ filename, name, version }] = JSON.parse(stdout);
+  const { name, version } = JSON.parse(await readFile(path.join(repository, "package.json"), "utf8"));
   assert.equal(name, "opencode-autocode", "Smoke tests must use the final npm package identity.");
+  const packageSpecifier = `${name}@${version}`;
+  let filename;
+  if (!publishedPackage) {
+    await access(path.join(repository, "dist/index.js"));
+    const { stdout } = await exec("npm", [
+      "pack", ...npmFlags, "--ignore-scripts", "--json", "--pack-destination", temporary,
+    ], { cwd: repository, env: npmEnvironment, timeout: 30_000 });
+    const [packed] = JSON.parse(stdout);
+    assert.equal(packed.name, name);
+    assert.equal(packed.version, version);
+    filename = packed.filename;
+  }
   const installation = path.join(temporary, "installed");
   await mkdir(installation);
   await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
-  if (registryInstall) {
-    // Install only the consumer tarball: npm must obtain every dependency and
+  if (registryInstall || publishedPackage) {
+    // Install only the consumer artifact: npm must obtain every dependency and
     // satisfy its peers normally. Scripts stay disabled to prove dist is shipped.
     await exec("npm", [
-      "install", ...npmFlags, "--ignore-scripts", "--no-audit", "--no-fund", path.join(temporary, filename),
+      "install", ...npmFlags, "--ignore-scripts", "--no-audit", "--no-fund",
+      publishedPackage ? packageSpecifier : path.join(temporary, filename),
     ], { cwd: installation, env: npmEnvironment, timeout: 180_000 });
     await exec("npm", ["ls", ...npmFlags, "--omit=dev", "--all"], {
       cwd: installation, env: npmEnvironment, timeout: 30_000,
     });
-    console.log("package: fresh-cache npm installation resolved dependencies and peers normally; no consumer build was required.");
+    console.log(`package: fresh-cache npm installation of ${publishedPackage ? packageSpecifier : "the local tarball"} resolved dependencies and peers normally; no consumer build was required.`);
   } else {
     // Fast deterministic native checks reuse only the locally available runtime
     // dependency; the separate registry mode validates normal npm resolution.
@@ -138,6 +151,7 @@ try {
   assert.equal(installedPackage.name, "opencode-autocode");
   assert.equal(installedPackage.version, version);
   assert.equal(installedPackage.exports["./tui"].import, "./tui.js", "The native UI companion must be discoverable.");
+  const pluginPackage = publishedPackage ? packageSpecifier : installed;
 
   fakeProvider.listen(0, "127.0.0.1");
   await once(fakeProvider, "listening");
@@ -148,7 +162,7 @@ try {
   const globalConfig = path.join(configRoot, "opencode/opencode.json");
   await writeFile(globalConfig, JSON.stringify({
     model: "smoke/inherited",
-    plugins: [{ package: installed, options: {} }],
+    plugins: [{ package: pluginPackage, options: {} }],
     providers: {
       smoke: {
         name: "Local smoke fixture",
@@ -172,7 +186,7 @@ try {
     await mkdir(directory);
     await writeFile(path.join(directory, "opencode.json"), JSON.stringify({
       ...(mode === "override" ? { plugins: [{
-        package: installed,
+        package: pluginPackage,
         options: { model: "smoke/reviewer" },
       }] } : {}),
       permissions: [{ action: "shell", resource: "*", effect: "ask" }],
@@ -208,6 +222,10 @@ try {
     XDG_DATA_HOME: path.join(temporary, "data"),
     XDG_CACHE_HOME: path.join(temporary, "cache"),
     XDG_STATE_HOME: path.join(temporary, "state"),
+    NPM_CONFIG_USERCONFIG: npmConfig,
+    NPM_CONFIG_GLOBALCONFIG: globalNpmConfig,
+    NPM_CONFIG_CACHE: path.join(temporary, "opencode-npm-cache"),
+    NPM_CONFIG_REGISTRY: "https://registry.npmjs.org",
     OPENCODE_PASSWORD: serverPassword,
   };
   child = spawn(binary, ["serve", "--hostname", "127.0.0.1", "--port", String(port), "--log-level", "warn"], {
@@ -237,7 +255,7 @@ try {
     assert.ok(response.ok, `${route}: HTTP ${response.status} ${JSON.stringify(result)}`);
     return result;
   }
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + (publishedPackage ? 180_000 : 30_000);
   while (true) {
     if (startupError) throw startupError;
     assert.equal(child.exitCode, null, `OpenCode exited before startup:\n${logs}`);
@@ -256,9 +274,9 @@ try {
     const locationQuery = `location%5Bdirectory%5D=${encodeURIComponent(projects[mode])}`;
     let plugins;
     let plugin;
-    const loadedBy = Date.now() + 10_000;
+    const loadedBy = Date.now() + (publishedPackage ? 180_000 : 10_000);
     do {
-      plugins = await api(`/api/plugin?${locationQuery}`);
+      plugins = await api(`/api/plugin?${locationQuery}`, undefined, publishedPackage ? 180_000 : 15_000);
       plugin = plugins.data.find((candidate) => candidate.id === "autocode");
       if (plugin) break;
       await delay(100);
@@ -273,6 +291,12 @@ try {
       throw new Error(`Packaged plugin was not discovered: ${JSON.stringify({ plugins, config: summary })}`);
     }
     assert.equal(plugin.state.status, "active", JSON.stringify(plugin));
+    if (publishedPackage) {
+      assert.equal(plugin.source.type, "package", "OpenCode must load from the public registry rather than a local directory.");
+      assert.equal(plugin.source.version, version, "OpenCode must resolve the exact published version.");
+      assert.equal(plugin.features.tui, true, "The registry package must expose its native TUI companion.");
+      console.log(`${mode}: OpenCode loaded ${packageSpecifier} from its own fresh package cache.`);
+    }
 
     const location = { directory: projects[mode] };
     const { data: seed } = await api("/api/session", { location, model });
@@ -479,7 +503,7 @@ try {
   const saved = await rpc("saveSettings", { revision: settings.revision, options: selectedOptions });
   assert.deepEqual(saved.options, selectedOptions);
   const persisted = JSON.parse(await readFile(globalConfig, "utf8"));
-  assert.deepEqual(persisted.plugins.find((entry) => entry.package === installed).options, selectedOptions);
+  assert.deepEqual(persisted.plugins.find((entry) => entry.package === pluginPackage).options, selectedOptions);
   assert.equal(persisted.model, "smoke/inherited", "Saving plugin settings must preserve the coding model.");
   assert.ok(persisted.providers.smoke, "Saving plugin settings must preserve provider configuration.");
   await waitForApprovalMode("inherit", "ask");

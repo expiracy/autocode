@@ -60,6 +60,7 @@
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "smoke": "npm run build && node test/smoke.mjs",
     "smoke:registry": "npm run build && node test/smoke.mjs --registry-install",
+    "smoke:published": "node test/smoke.mjs --published-package",
     "test:live": "node test/live-provider.mjs",
     "check": "npm run typecheck && npm test && npm run build",
     "release:check": "npm run check && npm run smoke:registry && npm pack --dry-run",

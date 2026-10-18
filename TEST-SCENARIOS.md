@@ -56,10 +56,12 @@ context despite the metadata-only storage shape; the UI and README explain this.
 - [x] Ship MIT licensing, release metadata, examples, and user documentation in the package.
 - [ ] Verify installation directly from the public npm package after publication.
 
-The prepared version is `opencode-autocode@0.1.0-beta.1`. It remains unpublished.
+The release version is `opencode-autocode@0.1.0-beta.1` under the `next` tag.
 The registry installation check downloads dependencies but installs the plugin
 from its local packed tarball; it cannot test public package-name resolution yet.
 The GitHub workflows check and prepare artifacts without publishing them.
+`npm run smoke:published` separately checks public registry installation after
+publication; its checkbox above is marked only after an actual successful run.
 
 ## Hard rejection precedence
 
