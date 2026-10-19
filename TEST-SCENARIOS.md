@@ -20,7 +20,7 @@
 - [x] Keep the settings command visible while the native command palette owns modal input.
 - [x] Search connected models by displayed name, provider, or raw model ID.
 
-Validation passed 151 unit tests, type checking, and build. The installed
+Plugin validation covers unit tests, type checking, and build. The installed
 OpenCode 2.0.28 terminal client was also checked directly: the command palette
 and `/autocode config` open the editor, raw model-ID searches return connected
 models, and the reasoning-variant picker renders the model's available variants.
@@ -56,10 +56,50 @@ context despite the metadata-only storage shape; the UI and README explain this.
 - [x] Ship MIT licensing, release metadata, examples, and user documentation in the package.
 - [ ] Verify installation directly from the public npm package after publication.
 
-The prepared version is `opencode-autocode@0.1.0-beta.1`. It remains unpublished.
+The candidate version is `opencode-autocode@0.1.0-beta.1`, intended for `next`.
+It is staged at npm and still awaits human approval. The public `0.0.0-stage`
+placeholder is not the plugin, and public package installation is not verified.
 The registry installation check downloads dependencies but installs the plugin
 from its local packed tarball; it cannot test public package-name resolution yet.
-The GitHub workflows check and prepare artifacts without publishing them.
+The GitHub workflows test one artifact and rehearse delivery by default. Only
+explicit staging uses npm OIDC; final publication remains a human action.
+`npm run smoke:published` separately checks public registry installation after
+publication; its checkbox above is marked only after an actual successful run.
+
+## Controlled CI and delivery
+
+- [x] Reject an invalid workflow with a useful lint diagnostic and accept a valid fixture.
+- [x] Lint the repository workflows with official, checksummed actionlint 1.7.12.
+- [x] Build one tarball and record source commit, version, MIT licence, channel, SHA-256, and SHA-512 integrity.
+- [x] Reject changed artifacts, mismatched source/version, and invalid release metadata before installation or delivery.
+- [x] Install the recorded artifact on Node.js 22.18 and 24 with fresh caches and lifecycle scripts disabled.
+- [x] Run the native suite against that exact artifact on Linux and macOS with OpenCode 2.0.28.
+- [x] Fail the aggregate **CI required** check if any dependency fails, is cancelled, or is skipped.
+- [x] Require the aggregate GitHub Actions check in actual `main` branch protection.
+- [ ] Complete a manual rehearsal without npm delivery or OIDC credentials.
+- [x] Restrict npm staging to an explicit request from `main` through the `npm-staging` environment.
+- [ ] Verify npm's external trust binding allows stage-only OIDC with no direct publish or dist-tag privilege.
+- [ ] Obtain human npm review and 2FA approval before a version becomes public.
+
+These delivery scenarios are separate from the plugin's established behavior.
+Mark them complete only after observing the relevant local check, hosted run, or
+external setting; workflow source alone does not prove a repository or npm gate
+is configured. Package artifacts retain their immutable GitHub ID for handoffs,
+and diagnostics must exclude profiles, credentials, and conversation payloads.
+
+[Hosted CI on 19 October 2026](https://github.com/expiracy/autocode/actions/runs/39216538980)
+passed 158 unit tests on each Node version, both fresh-cache installation jobs,
+both native host integrations, workflow lint, and **CI required**. The downloaded
+tarball, installation results, and Linux/macOS native results all record SHA-256
+`e858cf8db7ee4ffa2edd3a2ddb52c71f2a067329e8eddc55f02e292e4555f60d`
+for source commit `91dafae05bbd1a4f496b5b7b12201f1ec3fae696`. Retained results
+contain bounded test metadata and infrastructure logs; inspection found no
+credentials or conversation payloads. Local fixtures also verified the actual
+aggregate expression rejects failure, cancellation, and skipping. GitHub's API
+confirmed the required check is bound to the Actions app, enforced for admins,
+and requires an up-to-date PR; the staging environment allows exactly branch
+`main`, with no tag rules or secrets. Rehearsal, npm trust, and human publication
+remain separate unverified steps above.
 
 ## Hard rejection precedence
 

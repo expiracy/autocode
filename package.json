@@ -57,12 +57,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "test": "node --experimental-strip-types --test test/*.test.ts test/*.test.mjs",
+    "lint:workflows": "node scripts/lint-workflows.mjs",
+    "artifact:build": "npm run build && node scripts/release-artifact.mjs build",
     "smoke": "npm run build && node test/smoke.mjs",
     "smoke:registry": "npm run build && node test/smoke.mjs --registry-install",
+    "smoke:published": "node test/smoke.mjs --published-package",
     "test:live": "node test/live-provider.mjs",
     "check": "npm run typecheck && npm test && npm run build",
-    "release:check": "npm run check && npm run smoke:registry && npm pack --dry-run",
+    "release:check": "npm run typecheck && npm test && npm run lint:workflows",
     "prepack": "npm run build",
     "prepublishOnly": "npm run check"
   },

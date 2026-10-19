@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      delivery:
+        description: Rehearse by default; stage uploads the tested artifact for final human approval at npm.
+        required: true
+        type: choice
+        default: rehearsal
+        options:
+          - rehearsal
+          - stage
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  request:
+    name: Validate delivery request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Only main in the upstream repository may stage a release
+        env:
+          DELIVERY: ${{ inputs.delivery }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          case "$DELIVERY" in
+            rehearsal|stage) ;;
+            *) echo 'Unsupported delivery request.' >&2; exit 1 ;;
+          esac
+          if [ "$DELIVERY" = stage ]; then
+            test "$SOURCE_REF" = refs/heads/main
+            test "$SOURCE_REPOSITORY" = expiracy/autocode
+          fi
+
+  checks:
+    name: Test the release artifact
+    needs: request
+    uses: ./.github/workflows/ci.yml
+
+  rehearsal:
+    name: Rehearsal result
+    if: ${{ inputs.delivery == 'rehearsal' }}
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.checks.outputs.artifact-id }}
+          path: artifacts
+          merge-multiple: true
+      - name: Verify and report the tested package without npm delivery
+        run: |
+          node scripts/release-artifact.mjs verify --artifact artifacts/package.tgz --manifest artifacts/manifest.json --commit "$GITHUB_SHA"
+          printf '%s\n' 'Rehearsal passed. No npm upload or publication was requested.' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/manifest.json >> "$GITHUB_STEP_SUMMARY"
+
+  stage:
+    name: Stage tested artifact at npm
+    if: ${{ inputs.delivery == 'stage' && github.ref == 'refs/heads/main' && github.repository == 'expiracy/autocode' }}
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-staging
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AUTOCODE_DELIVERY_ACTION: ${{ inputs.delivery }}
+      AUTOCODE_DELIVERY_ENVIRONMENT: npm-staging
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.checks.outputs.artifact-id }}
+          path: artifacts
+          merge-multiple: true
+      - name: Install the pinned OIDC-capable npm CLI
+        run: npm install --global npm@12.2.0 --ignore-scripts --no-audit --no-fund
+      - name: Stage the tested tarball through trusted publishing
+        run: node scripts/release-artifact.mjs stage --artifact artifacts/package.tgz --manifest artifacts/manifest.json --commit "$GITHUB_SHA" --diagnostics diagnostics/stage
+      - name: Record the remaining human approval
+        run: |
+          printf '%s\n' 'The tested package was staged at npm. Final publication requires a human to review and approve it at npm.' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/manifest.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: diagnostics-npm-stage
+          path: diagnostics/stage/
+          retention-days: 14
+          if-no-files-found: ignore
