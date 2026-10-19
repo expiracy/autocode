@@ -7,25 +7,65 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 // Runs only against a local fake provider, in disposable config/data directories.
 // Build first: npm run build && node test/smoke.mjs
 // Add --registry-install to resolve the packed package's dependencies from npm
 // in an empty cache, without peer-dependency bypasses or seeded packages.
+// CI can supply --artifact <path.tgz> to install that exact built artifact,
+// resolving dependencies normally without packing or reading workspace dist.
+// Use --diagnostics-dir <directory> to retain sanitized summaries and host logs.
 // After publication, --published-package installs the exact manifest version
 // from npm and asks OpenCode to load that registry package by name as well.
 const exec = promisify(execFile);
 const repository = fileURLToPath(new URL("..", import.meta.url));
-const registryInstall = process.argv.includes("--registry-install");
-const publishedPackage = process.argv.includes("--published-package");
-assert.ok(process.argv.slice(2).every((argument) => ["--registry-install", "--published-package"].includes(argument)), "Unknown smoke-test option.");
-assert.ok(!(registryInstall && publishedPackage), "Choose either a local tarball or the published package.");
+const arguments_ = process.argv.slice(2);
+const options = {};
+for (let index = 0; index < arguments_.length; index += 1) {
+  const argument = arguments_[index];
+  assert.ok(["--registry-install", "--published-package", "--artifact", "--diagnostics-dir"].includes(argument), `Unknown smoke-test option: ${argument}`);
+  assert.ok(!(argument in options), `Duplicate smoke-test option: ${argument}`);
+  if (argument === "--artifact" || argument === "--diagnostics-dir") {
+    const value = arguments_[index + 1];
+    assert.ok(value && !value.startsWith("--"), `${argument} requires a path.`);
+    options[argument] = path.resolve(value);
+    index += 1;
+  } else options[argument] = true;
+}
+const artifact = options["--artifact"];
+const registryInstall = options["--registry-install"] === true;
+const publishedPackage = options["--published-package"] === true;
+const diagnosticsDirectory = options["--diagnostics-dir"];
+assert.ok(Number(registryInstall) + Number(publishedPackage) + Number(Boolean(artifact)) <= 1,
+  "Choose exactly one of --artifact, --registry-install, or --published-package.");
 const temporary = await mkdtemp(path.join(tmpdir(), "autocode-smoke-"));
 const serverPassword = randomUUID();
 const requests = [];
 let child;
 let logs = "";
+let packageMetadata;
+let artifactMetadata;
+let hostVersion;
+let phase = "installation";
+let outcome = "failed";
+let failure;
+const startedAt = new Date().toISOString();
+const checks = [];
+const report = (message) => { checks.push(message); console.log(message); };
+function sanitize(value) {
+  // Retain infrastructure diagnostics, never serialized request/conversation
+  // payloads, credentials or environment dumps. Provider request bodies are not
+  // written to diagnostic files at all.
+  return String(value).replaceAll(serverPassword, "[redacted]")
+    .replaceAll(Buffer.from(`opencode:${serverPassword}`).toString("base64"), "[redacted]")
+    .replace(/\bnpm_[A-Za-z0-9]+/g, "[redacted]")
+    .replace(/\b(?:Bearer|Basic)\s+[^\s,;]+/gi, "[redacted]")
+    .split(/\r?\n/).filter((line) =>
+      !/(?:prompt|messages?|conversation|context|content|text|input|output|command|tools?|authorization|password|secret|token|api[_-]?key|process\.env)["']?\s*[=:]/i.test(line))
+    .map((line) => line.includes("{") ? `${line.slice(0, line.indexOf("{"))}[structured payload omitted]` : line)
+    .join("\n").slice(-32_000);
+}
 const fakeProvider = createServer(async (request, response) => {
   try {
     assert.equal(request.method, "POST");
@@ -103,11 +143,28 @@ try {
     "--registry", "https://registry.npmjs.org"];
   const npmEnvironment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
     !/^(?:npm_config_|npm_token$|node_auth_token$)/i.test(name)));
-  const { name, version } = JSON.parse(await readFile(path.join(repository, "package.json"), "utf8"));
+  // Exact-artifact mode derives its contract from the provided archive. It
+  // must work with no workspace package.json, dist or node_modules present.
+  if (artifact) await access(artifact);
+  const packageJSON = artifact
+    ? (await exec("tar", ["-xOf", artifact, "package/package.json"], { timeout: 30_000 })).stdout
+    : await readFile(path.join(repository, "package.json"), "utf8");
+  const { name, version } = JSON.parse(packageJSON);
   assert.equal(name, "opencode-autocode", "Smoke tests must use the final npm package identity.");
+  assert.equal(typeof version, "string");
+  assert.ok(version.length > 0, "The package must identify its version.");
+  packageMetadata = { name, version };
+  if (artifact) {
+    const bytes = await readFile(artifact);
+    artifactMetadata = {
+      filename: path.basename(artifact),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+    };
+  }
   const packageSpecifier = `${name}@${version}`;
   let filename;
-  if (!publishedPackage) {
+  if (!publishedPackage && !artifact) {
     await access(path.join(repository, "dist/index.js"));
     const { stdout } = await exec("npm", [
       "pack", ...npmFlags, "--ignore-scripts", "--json", "--pack-destination", temporary,
@@ -120,17 +177,17 @@ try {
   const installation = path.join(temporary, "installed");
   await mkdir(installation);
   await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
-  if (registryInstall || publishedPackage) {
+  if (registryInstall || publishedPackage || artifact) {
     // Install only the consumer artifact: npm must obtain every dependency and
     // satisfy its peers normally. Scripts stay disabled to prove dist is shipped.
     await exec("npm", [
       "install", ...npmFlags, "--ignore-scripts", "--no-audit", "--no-fund",
-      publishedPackage ? packageSpecifier : path.join(temporary, filename),
-    ], { cwd: installation, env: npmEnvironment, timeout: 180_000 });
+      publishedPackage ? packageSpecifier : artifact ?? path.join(temporary, filename),
+    ], { cwd: installation, env: npmEnvironment, timeout: 300_000 });
     await exec("npm", ["ls", ...npmFlags, "--omit=dev", "--all"], {
       cwd: installation, env: npmEnvironment, timeout: 30_000,
     });
-    console.log(`package: fresh-cache npm installation of ${publishedPackage ? packageSpecifier : "the local tarball"} resolved dependencies and peers normally; no consumer build was required.`);
+    report(`package: fresh-cache npm installation of ${publishedPackage ? packageSpecifier : "the supplied tarball"} resolved dependencies and peers normally; no consumer build was required.`);
   } else {
     // Fast deterministic native checks reuse only the locally available runtime
     // dependency; the separate registry mode validates normal npm resolution.
@@ -153,6 +210,7 @@ try {
   assert.equal(installedPackage.exports["./tui"].import, "./tui.js", "The native UI companion must be discoverable.");
   const pluginPackage = publishedPackage ? packageSpecifier : installed;
 
+  phase = "host startup";
   fakeProvider.listen(0, "127.0.0.1");
   await once(fakeProvider, "listening");
   const providerPort = fakeProvider.address().port;
@@ -262,7 +320,8 @@ try {
     try {
       const info = await api("/api/info", undefined, 500);
       assert.match(info.version, /^2\./, "Smoke test requires OpenCode 2.");
-      console.log(`OpenCode ${info.version}: isolated server started.`);
+      hostVersion = info.version;
+      report(`OpenCode ${info.version}: isolated server started.`);
       break;
     } catch (error) {
       if (Date.now() >= deadline) throw new Error(`OpenCode startup timed out: ${error}\n${logs}`);
@@ -270,6 +329,7 @@ try {
     }
   }
 
+  phase = "native plugin integration";
   for (const mode of ["inherit", "override"]) {
     const locationQuery = `location%5Bdirectory%5D=${encodeURIComponent(projects[mode])}`;
     let plugins;
@@ -291,11 +351,11 @@ try {
       throw new Error(`Packaged plugin was not discovered: ${JSON.stringify({ plugins, config: summary })}`);
     }
     assert.equal(plugin.state.status, "active", JSON.stringify(plugin));
+    assert.equal(plugin.features.tui, true, "The installed artifact must expose its native TUI companion.");
     if (publishedPackage) {
       assert.equal(plugin.source.type, "package", "OpenCode must load from the public registry rather than a local directory.");
       assert.equal(plugin.source.version, version, "OpenCode must resolve the exact published version.");
-      assert.equal(plugin.features.tui, true, "The registry package must expose its native TUI companion.");
-      console.log(`${mode}: OpenCode loaded ${packageSpecifier} from its own fresh package cache.`);
+      report(`${mode}: OpenCode loaded ${packageSpecifier} from its own fresh package cache.`);
     }
 
     const location = { directory: projects[mode] };
@@ -337,7 +397,7 @@ try {
     assert.equal(requests.length, requestCount + 1, "Permission must invoke exactly one tool-free model review.");
     assert.equal(requests.at(-1).model, mode === "inherit" ? "inherited" : "reviewer");
     assert.ok(!requests.at(-1).tools?.length, "Reviewer must not receive tools.");
-    console.log(`${mode}: installed plugin active, automatic approval used ${requests.at(-1).model}.`);
+    report(`${mode}: installed plugin active, automatic approval used ${requests.at(-1).model}.`);
   }
   const { data: liveSession } = await api("/api/session", { location: { directory: projects.inherit }, model });
   await api(`/api/session/${liveSession.id}/prompt`, {
@@ -356,7 +416,7 @@ try {
   assert.equal(liveCall.state.status, "completed", `Live shell approval failed: ${JSON.stringify(liveCall)}`);
   assert.ok(liveCall.state.content.some((part) => part.type === "text" && part.text.includes("smoke-check")));
   assert.deepEqual((await api(`/api/session/${liveSession.id}/permission`)).data, []);
-  console.log("live call: real shell permission auto-approved and printf completed in the temporary directory.");
+  report("live call: real shell permission auto-approved and printf completed in the temporary directory.");
 
   const rpc = async (method, input, directory = projects.inherit) => {
     const locationQuery = `location%5Bdirectory%5D=${encodeURIComponent(directory)}`;
@@ -395,7 +455,7 @@ try {
     assert.match(entry.id, /^[0-9a-f-]{36}$/);
   }
   assert.equal(new Set(initialLog.entries.map((entry) => entry.id)).size, 2);
-  console.log("diagnostics: native review history persists actual decisions, model, timing and bounded metadata without command or conversation fields.");
+  report("diagnostics: native review history persists actual decisions, model, timing and bounded metadata without command or conversation fields.");
 
   const beforeDiagnostics = requests.length;
   const aliasDirectory = path.join(temporary, "inherit-alias");
@@ -426,7 +486,7 @@ try {
   assert.deepEqual((await rpc("log", {})).entries, initialLog.entries,
     "Clearing the current project's history must preserve another project's history.");
   assert.equal(requests.length, beforeDiagnostics, "Reading status/history and clearing history must not call a model.");
-  console.log("diagnostics: directory aliases share history, status reflects project options, and clearing one project preserves another.");
+  report("diagnostics: directory aliases share history, status reflects project options, and clearing one project preserves another.");
 
   async function openAutoCode(text, eventName) {
     // Subscribe before invoking the command so the ephemeral UI event cannot be missed.
@@ -523,9 +583,9 @@ try {
   });
   assert.equal(inherited.effective.model, undefined);
   await waitForApprovalMode("inherit", "allow", "inherited");
-  console.log("commands: /autocode config, log, status, help and bare help emit UI events while enabled or disabled, without model calls; removed settings command rejected.");
-  console.log("settings: models/variants listed, global choices persisted and live approvals updated; project override preserved.");
-  console.log("diagnostics: saved status and existing history remain available after plugin reload while automatic review is disabled.");
+  report("commands: /autocode config, log, status, help and bare help emit UI events while enabled or disabled, without model calls; removed settings command rejected.");
+  report("settings: models/variants listed, global choices persisted and live approvals updated; project override preserved.");
+  report("diagnostics: saved status and existing history remain available after plugin reload while automatic review is disabled.");
 
   async function shellFixture(directory, command, permissions) {
     const location = { directory };
@@ -571,7 +631,7 @@ try {
   assert.deepEqual((await api(`/api/session/${blocked.sessionID}/permission`)).data, [], "A configured deny must not create an approval prompt.");
   assert.deepEqual((await rpc("log", {}, projects.hardReject)).entries, [],
     "A configured deny must not be recorded as an AutoCode review.");
-  console.log("hard reject: a configured deny blocks the command before model review or prompting.");
+  report("hard reject: a configured deny blocks the command before model review or prompting.");
   const compound = await shellFixture(projects.hardReject, "printf smoke-allowed; printf smoke-blocked");
   compound.permission.resources = ["printf smoke-allowed", "printf smoke-blocked"];
   const beforeCompound = requests.length;
@@ -579,7 +639,7 @@ try {
   assert.equal(requests.length, beforeCompound, "One denied resource must block the whole compound command before model review.");
   assert.deepEqual((await api(`/api/session/${compound.sessionID}/permission`)).data, []);
   assert.deepEqual((await rpc("log", {}, projects.hardReject)).entries, []);
-  console.log("hard reject: a denied resource blocks the whole compound command.");
+  report("hard reject: a denied resource blocks the whole compound command.");
   const disabledForSavedApproval = await rpc("saveSettings", {
     revision: inherited.revision, options: { ...inherited.options, enabled: false },
   });
@@ -610,7 +670,7 @@ try {
   assert.deepEqual((await api(`/api/session/${deniedAfterSaved.sessionID}/permission`)).data, []);
   assert.deepEqual(await rpc("log", {}), beforeSavedHistory,
     "Configured denies must leave AutoCode history unchanged, including conflicts with saved approvals.");
-  console.log("hard reject: configured deny wins over a verified native Allow always approval.");
+  report("hard reject: configured deny wins over a verified native Allow always approval.");
   const policyBlocked = await shellFixture(projects.hardReject, "printf smoke-policy");
   const beforePolicy = requests.length;
   assert.equal((await api(`/api/session/${policyBlocked.sessionID}/permission`, policyBlocked.permission)).data.effect, "deny");
@@ -623,7 +683,7 @@ try {
   assert.equal(policyHistory.entries[0].decision, "allow",
     "History records the reviewer's allow verdict, even when OpenCode's later policy denies the request.");
   assert.equal(policyHistory.entries[0].reason, "Local smoke test approval.");
-  console.log("hard reject: protected tool.use policy overrides an automatic model approval.");
+  report("hard reject: protected tool.use policy overrides an automatic model approval.");
 
   async function assertRejectedShell({ marker, toolID, outputFile, reviewCount, reason }) {
     const { data: session } = await api("/api/session", { location: { directory: projects.hardReject }, model });
@@ -651,7 +711,7 @@ try {
   });
   assert.deepEqual(await rpc("log", {}, projects.hardReject), policyHistory,
     "An actually blocked configured-deny tool call must not create a review record.");
-  console.log("hard reject: configured-denied shell tool failed without review and never created its printf marker.");
+  report("hard reject: configured-denied shell tool failed without review and never created its printf marker.");
   const policyExecutionSessionID = await assertRejectedShell({
     marker: "LIVE_POLICY_REJECT", toolID: "call_live_policy_reject", outputFile: ".autocode-policy-reject-marker",
     reviewCount: 1, reason: /Blocked by configuration policy/,
@@ -660,21 +720,47 @@ try {
   assert.equal(finalPolicyHistory.entries.length, 2);
   assert.equal(finalPolicyHistory.entries.find((entry) => entry.sessionID === policyExecutionSessionID)?.decision, "allow",
     "A failed shell execution after a policy block must retain the actual review verdict, not pretend the reviewer denied it.");
-  console.log("hard reject: policy-denied shell tool failed despite the model's approval and never created its printf marker.");
-  console.log("diagnostics: configured denies create no review records; protected-policy blocks retain the model's allow verdict without claiming successful execution.");
-  console.log("Smoke test passed; all model traffic stayed on the local fake provider.");
+  report("hard reject: policy-denied shell tool failed despite the model's approval and never created its printf marker.");
+  report("diagnostics: configured denies create no review records; protected-policy blocks retain the model's allow verdict without claiming successful execution.");
+  outcome = "passed";
+  phase = "complete";
+  report("Smoke test passed; all model traffic stayed on the local fake provider.");
 } catch (error) {
-  const logFiles = (await readdir(temporary, { recursive: true })).filter((name) =>
-    name.endsWith(".log") && ["data", "state"].some((directory) => name.startsWith(directory + path.sep)));
-  for (const name of logFiles) {
-    const logFile = await readFile(path.join(temporary, name), "utf8").catch(() => "");
-    if (logFile) console.error(logFile.replaceAll(serverPassword, "[redacted]").slice(-32_000));
-  }
-  if (logs) console.error(logs);
-  throw error;
+  failure = {
+    name: error.name,
+    code: ["string", "number"].includes(typeof error.code) ? error.code : undefined,
+    killed: error.killed === true ? true : undefined,
+    signal: typeof error.signal === "string" ? error.signal : undefined,
+    message: sanitize(error.message),
+    stack: sanitize(error.stack ?? ""),
+    stdout: error.stdout ? sanitize(error.stdout) : undefined,
+    stderr: error.stderr ? sanitize(error.stderr) : undefined,
+  };
+  if (logs) console.error(sanitize(logs));
+  throw new Error(failure.message);
 } finally {
   await stopChild();
   fakeProvider.closeAllConnections();
   await new Promise((resolve) => fakeProvider.close(resolve));
-  await rm(temporary, { recursive: true, force: true });
+  try {
+    if (diagnosticsDirectory) {
+      await mkdir(diagnosticsDirectory, { recursive: true, mode: 0o700 });
+      const logFiles = (await readdir(temporary, { recursive: true })).filter((name) =>
+        name.endsWith(".log") && ["data", "state", "npm-cache"].some((directory) => name.startsWith(directory + path.sep)));
+      let nativeLogs = sanitize(logs);
+      for (const name of logFiles) {
+        const value = await readFile(path.join(temporary, name), "utf8").catch(() => "");
+        if (value) nativeLogs += `\n${path.basename(name)}:\n${sanitize(value)}\n`;
+      }
+      await writeFile(path.join(diagnosticsDirectory, "host.log"), nativeLogs.slice(-128_000), { mode: 0o600 });
+      await writeFile(path.join(diagnosticsDirectory, "result.json"), JSON.stringify({
+        outcome, phase, startedAt, finishedAt: new Date().toISOString(),
+        runtime: { node: process.version, platform: process.platform, arch: process.arch },
+        package: packageMetadata, artifact: artifactMetadata, hostVersion,
+        provider: "local fake provider only", modelRequests: requests.length, checks, failure,
+      }, null, 2) + "\n", { mode: 0o600 });
+    }
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 }

@@ -1,13 +1,19 @@
 # Contributing to AutoCode
 
-Use Node.js 22.18 or newer and npm. This project targets the OpenCode v2 plugin API and is tested with OpenCode 2.0.28.
+Use Node.js 22.18 or newer and npm. This project targets the OpenCode v2 plugin API and is tested with OpenCode 2.0.28 on Linux and macOS. CI checks Node.js 22.18 and 24; Windows host integration is not part of the verified support matrix.
 
 ```sh
-npm ci
+npm ci --ignore-scripts
 npm run check
+npm run lint:workflows
 ```
 
 `check` runs TypeScript checking, unit tests, and the production build. Keep changes focused and include a regression test for changed behavior. Permission failures must continue to require manual review or reject the request; they must never create an automatic approval.
+
+`lint:workflows` uses a pinned actionlint 1.7.12 release with checked SHA-256
+digests for Linux/macOS x64 and arm64. Its first run downloads the official
+archive; later runs verify the archive cached in the system temporary directory.
+It does not install a global tool or require npm development dependencies.
 
 ## Native integration test
 
@@ -34,9 +40,20 @@ npm run smoke:registry
 
 This downloads package dependencies from npm and runs the same native scenarios.
 The plugin under test is installed from its local tarball, and all model traffic
-still uses the local fake provider. `npm run release:check` combines project checks,
-this installation check, and a package contents preview. CI runs checks on Node.js
-22 and 24 and native installation on Linux and macOS with OpenCode 2.0.28.
+still uses the local fake provider. `npm run release:check` combines local release
+preparation checks; the [release workflow](RELEASING.md) separately tests one
+identified archive across the full CI matrix.
+
+To run the native suite against an already built package without repacking it:
+
+```sh
+node test/smoke.mjs --artifact artifacts/package.tgz --diagnostics-dir diagnostics/native
+```
+
+The test reads package metadata from that archive, installs it with a fresh npm
+cache and lifecycle scripts disabled, and loads its installed server/TUI
+entrypoints. It retains sanitized host logs and result metadata when requested.
+Do not upload temporary profiles, credentials, or conversation payloads.
 
 After publishing the manifest version, verify the actual npm package and OpenCode's
 registry loader with `npm run smoke:published`. This uses fresh npm and OpenCode
@@ -57,6 +74,19 @@ This check makes real model calls and incurs normal provider costs. It reads the
 
 ## Packaging and releases
 
-Run `npm pack --dry-run` to inspect the package contents; the prepack hook builds the distributable. Use the [release checklist](RELEASING.md) before publishing. Beta releases use the npm `next` tag.
+PRs, merge queues, and pushes to `main` run typechecking, tests, workflow linting,
+one package build, fresh-cache artifact installation on Node.js 22.18/24, and
+native OpenCode 2.0.28 integrations on Linux/macOS. The package job records its
+source commit, version, licence, release channel, and checksums; all consumers
+download the same immutable artifact ID. The stable **CI required** aggregate
+must pass before merging. Diagnostics are retained for 14 days and the package
+for 30 days; download evidence you need to keep longer.
+
+Run `npm pack --dry-run` to inspect local package contents; its prepack hook builds
+the distributable. Use the [release checklist](RELEASING.md) for delivery. The
+manual **Release** workflow defaults to rehearsal. Explicit staging from `main`
+uses stage-only npm OIDC and the protected `npm-staging` environment, and a human
+must approve the stage at npm with 2FA. Do not add publishing tokens or automatic
+final approval. Beta releases use `next`; stable releases use `latest`.
 
 Submit focused changes through [GitHub](https://github.com/expiracy/autocode). Include what changed and the checks you actually ran. Contributions use the project's [MIT license](LICENSE).

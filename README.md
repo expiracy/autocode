@@ -2,15 +2,15 @@
 
 Model-based shell command approval for OpenCode v2. AutoCode reviews commands that would otherwise need your approval, using the coding model by default or a separate model you choose. Configure it from `/autocode config` without changing your coding model, and inspect recent reviews with `/autocode log`.
 
-**Beta release:** [`opencode-autocode@0.1.0-beta.1`](https://www.npmjs.com/package/opencode-autocode/v/0.1.0-beta.1). Beta releases use the npm `next` tag; the configuration below pins this version.
+**Release status:** `opencode-autocode@0.1.0-beta.1` is staged at npm and awaits human approval. It is not available for installation yet; the public `0.0.0-stage` placeholder is not the plugin. Use a local checkout until the beta is approved. Beta releases use the `next` tag.
 
-Tested with **OpenCode 2.0.28** and its v2 plugin API. OpenCode v1 is not supported.
+Tested with **OpenCode 2.0.28** and its v2 plugin API on Linux and macOS. OpenCode v1 is not supported. Local development requires Node.js 22.18 or newer; CI covers Node.js 22.18 and 24.
 
 ## Install
 
-### From npm
+### From npm, after release approval
 
-Merge this registration into your global `~/.config/opencode/opencode.jsonc` or `opencode.json`. OpenCode installs the package from the `plugins` entry; a separate `npm install -g` is unnecessary.
+Once the beta is publicly available, merge this registration into your global `~/.config/opencode/opencode.jsonc` or `opencode.json`. OpenCode installs the package from the `plugins` entry; a separate `npm install -g` is unnecessary.
 
 ```jsonc
 {
@@ -198,3 +198,15 @@ To pause automatic reviews, disable AutoCode in settings. To uninstall, clear an
 ## Development and releases
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for checks, isolated integration tests, and opt-in real provider validation. See [RELEASING.md](RELEASING.md) for the release checklist. This repository is licensed under [MIT](LICENSE).
+
+Pull requests and `main` run typechecking, tests, workflow linting, and one package
+build. CI records the source commit, version, licence, release channel, and
+checksums, then tests that exact tarball through fresh-cache installation and
+OpenCode integrations. The aggregate **CI required** check gates merges.
+
+The manual **Release** workflow defaults to rehearsal. Only an explicit `stage`
+request from `main` can deliver the tested artifact to npm through stage-only
+OIDC trusted publishing. Final publication requires a maintainer to inspect and
+approve the staged package at npm with 2FA. See the release checklist for the
+required repository environment and npm trust setup; a passing rehearsal does
+not establish that npm trust has been configured.

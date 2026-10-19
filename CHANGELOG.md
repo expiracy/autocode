@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.1.0-beta.1 — 2026-10-18
+## 0.1.0-beta.1 — Staged, awaiting human approval
 
-First npm release as `opencode-autocode`, using the `next` distribution tag, with the AutoCode
+First planned npm release as `opencode-autocode`, using the `next` distribution tag, with the AutoCode
 plugin ID and `/autocode config` command. Tested with OpenCode 2.0.28.
 
 - Review individual pending shell commands with the proposing model and variant,

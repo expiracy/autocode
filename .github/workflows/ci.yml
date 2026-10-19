@@ -1,48 +1,219 @@
-name: Checks
+name: CI
 
 on:
-  push:
   pull_request:
+  merge_group:
+  push:
+    branches: [main]
   workflow_call:
+    outputs:
+      artifact-name:
+        description: The single tested npm tarball and its release manifest.
+        value: ${{ jobs.package.outputs.artifact-name }}
+      artifact-id:
+        description: Immutable GitHub artifact ID for the tested package.
+        value: ${{ jobs.package.outputs.artifact-id }}
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  check:
+  workflow-lint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Lint all workflows with verified actionlint
+        run: |
+          mkdir -p diagnostics
+          npm run lint:workflows 2>&1 | tee diagnostics/workflow-lint.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: diagnostics-workflow-lint
+          path: diagnostics/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  checks:
     name: Node ${{ matrix.node }} checks
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        node: [22, 24]
+        node: [22.18.0, 24]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
-      - run: npm ci
-      - run: npm run check
-      - run: npm pack --dry-run
+      - name: Install locked development dependencies
+        run: |
+          mkdir -p diagnostics
+          npm ci --ignore-scripts 2>&1 | tee diagnostics/dependencies.log
+      - name: Typecheck
+        run: npm run typecheck 2>&1 | tee diagnostics/typecheck.log
+      - name: Unit tests
+        run: npm test 2>&1 | tee diagnostics/tests.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: diagnostics-checks-node-${{ matrix.node }}
+          path: diagnostics/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  package:
+    name: Build one npm artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      artifact-name: opencode-autocode-${{ github.sha }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install locked development dependencies
+        run: |
+          mkdir -p diagnostics
+          npm ci --ignore-scripts 2>&1 | tee diagnostics/dependencies.log
+      - name: Build JavaScript once
+        run: npm run build 2>&1 | tee diagnostics/build.log
+      - name: Pack once and record the source, version, and checksums
+        run: |
+          node scripts/release-artifact.mjs build --output artifacts --commit "$GITHUB_SHA" 2>&1 | tee diagnostics/package.log
+          cat artifacts/manifest.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        with:
+          name: opencode-autocode-${{ github.sha }}
+          path: |
+            artifacts/package.tgz
+            artifacts/manifest.json
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: diagnostics-package
+          path: diagnostics/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  install:
+    name: Artifact install on Node ${{ matrix.node }}
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22.18.0, 24]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.package.outputs.artifact-id }}
+          path: artifacts
+          merge-multiple: true
+      - name: Verify and install the exact tarball with normal dependency resolution
+        run: |
+          mkdir -p diagnostics
+          node scripts/release-artifact.mjs install --artifact artifacts/package.tgz --manifest artifacts/manifest.json --commit "$GITHUB_SHA" --diagnostics diagnostics/install 2>&1 | tee diagnostics/install.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: diagnostics-install-node-${{ matrix.node }}
+          path: diagnostics/
+          retention-days: 14
+          if-no-files-found: ignore
 
   native:
     name: OpenCode 2.0.28 on ${{ matrix.os }}
+    needs: package
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           package-manager-cache: false
-      - run: npm ci
-      - run: npm install --global @opencode/cli@2.0.28
-      - run: opencode --version
-      - run: npm run smoke:registry
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.package.outputs.artifact-id }}
+          path: artifacts
+          merge-multiple: true
+      - name: Install the supported native host
+        run: |
+          mkdir -p diagnostics
+          npm install --global @opencode/cli@2.0.28 2>&1 | tee diagnostics/host-install.log
+          opencode --version | tee diagnostics/host-version.log
+      - name: Verify the exact build artifact
+        run: node scripts/release-artifact.mjs verify --artifact artifacts/package.tgz --manifest artifacts/manifest.json --commit "$GITHUB_SHA" 2>&1 | tee diagnostics/verify.log
+      - name: Test the artifact in OpenCode with an isolated local provider
+        run: node test/smoke.mjs --artifact artifacts/package.tgz --diagnostics-dir diagnostics/native 2>&1 | tee diagnostics/native.log
         env:
           OPENCODE_BIN: opencode
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: diagnostics-native-${{ matrix.os }}
+          path: diagnostics/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  required:
+    name: CI required
+    if: ${{ always() }}
+    needs: [workflow-lint, checks, package, install, native]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every check, artifact installation, and native integration
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          printf '%s\n' "$RESULTS" >> "$GITHUB_STEP_SUMMARY"
+          jq -e 'keys == ["checks", "install", "native", "package", "workflow-lint"] and all(.[]; .result == "success")' <<< "$RESULTS"
