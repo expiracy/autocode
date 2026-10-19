@@ -76,7 +76,7 @@ publication; its checkbox above is marked only after an actual successful run.
 - [x] Run the native suite against that exact artifact on Linux and macOS with OpenCode 2.0.28.
 - [x] Fail the aggregate **CI required** check if any dependency fails, is cancelled, or is skipped.
 - [x] Require the aggregate GitHub Actions check in actual `main` branch protection.
-- [ ] Complete a manual rehearsal without npm delivery or OIDC credentials.
+- [x] Complete a manual rehearsal without npm delivery or OIDC credentials.
 - [x] Restrict npm staging to an explicit request from `main` through the `npm-staging` environment.
 - [ ] Verify npm's external trust binding allows stage-only OIDC with no direct publish or dist-tag privilege.
 - [ ] Obtain human npm review and 2FA approval before a version becomes public.
@@ -98,8 +98,18 @@ credentials or conversation payloads. Local fixtures also verified the actual
 aggregate expression rejects failure, cancellation, and skipping. GitHub's API
 confirmed the required check is bound to the Actions app, enforced for admins,
 and requires an up-to-date PR; the staging environment allows exactly branch
-`main`, with no tag rules or secrets. Rehearsal, npm trust, and human publication
-remain separate unverified steps above.
+`main`, with no tag rules or secrets. npm trust and human publication remain
+separate unverified steps above.
+
+[Manual Release rehearsal on 19 October 2026](https://github.com/expiracy/autocode/actions/runs/39217634165)
+passed the reusable CI suite and rehearsal verification at main commit
+`6ad5500ed708f70d953fee6a3f92b89808b03445`. The tarball, both Node installation
+results, and both OpenCode host results share SHA-256
+`dcf6c32abbb04f7de8513a3fc5a79a75c40f84d69df7ec79004cb1e9cde3951d`.
+The tarball's SHA-512 integrity and both native results also match the manifest.
+The npm staging job was skipped, so this run requested no OIDC delivery credentials and uploaded nothing
+to npm. Retained diagnostics inspection found no credentials or conversation
+payloads.
 
 ## Hard rejection precedence
 
