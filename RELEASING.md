@@ -91,7 +91,9 @@ something a rehearsal verifies.
 
 1. Update `package.json` and `package-lock.json` together. Use a prerelease version
    for beta delivery, update `CHANGELOG.md`, and keep README/example version pins
-   aligned. npm versions cannot be reused after publication.
+   aligned. Set `publishConfig.tag` to `next` for prereleases or `latest` for stable
+   versions; artifact verification rejects a mismatched channel. npm versions
+   cannot be reused after publication.
 2. Confirm licence, exported server and TUI entrypoints, documentation, runtime
    versions, and OpenCode support. Do not include local state, credentials,
    validation transcripts, or caches in the package.
