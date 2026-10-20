@@ -42,6 +42,6 @@ Settings, log, and status failures also show a native error notification in the 
 
 ## Update or uninstall
 
-The npm example uses the `next` beta channel. For a fixed version, replace the registration's `package` with an exact specifier such as `opencode-autocode@0.1.0-beta.3`. Review the [changelog](../CHANGELOG.md) before upgrading, and restart OpenCode after changing its registration. While using a local checkout, pull the desired revision, run `npm ci` and `npm run build`, then restart OpenCode.
+The npm example uses the `next` beta channel. For a fixed version, replace the registration's `package` with an exact specifier such as `opencode-autocode@0.1.0-beta.4`. Review the [changelog](../CHANGELOG.md) before upgrading, and restart OpenCode after changing its registration. While using a local checkout, pull the desired revision, run `npm ci` and `npm run build`, then restart OpenCode.
 
 To pause automatic reviews, disable AutoCode in settings. To uninstall, clear any review history you want removed through `/autocode log`, remove its entry from the global `plugins` array and any project registrations, then restart OpenCode. Keep your permission rules and policies as needed for normal OpenCode approvals. Optional settings backups and OpenCode's plugin storage remain after removing a registration.
