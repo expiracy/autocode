@@ -56,11 +56,12 @@ context despite the metadata-only storage shape; the UI and README explain this.
 - [x] Ship MIT licensing, release metadata, examples, and user documentation in the package.
 - [ ] Verify installation directly from the public npm package after publication.
 
-The candidate version is `opencode-autocode@0.1.0-beta.1`, intended for `next`.
-It is staged at npm and still awaits human approval. The public `0.0.0-stage`
-placeholder is not the plugin, and public package installation is not verified.
+The public version is `opencode-autocode@0.1.0-beta.1`, available through `next`
+and, following explicit maintainer approval on 20 October 2026, `latest`.
+The `0.0.0-stage` placeholder is not the plugin. The published-package smoke
+scenario above remains unchecked until its separate installation check runs.
 The registry installation check downloads dependencies but installs the plugin
-from its local packed tarball; it cannot test public package-name resolution yet.
+from its local packed tarball; that mode does not test public plugin resolution.
 The GitHub workflows test one artifact and rehearse delivery by default. Only
 explicit staging uses npm OIDC; final publication remains a human action.
 `npm run smoke:published` separately checks public registry installation after

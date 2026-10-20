@@ -5,11 +5,15 @@ Node.js 22.18 or newer and the OpenCode v2 plugin API. CI checks Node.js 22.18 a
 24 and runs native integrations with OpenCode 2.0.28 on Linux and macOS. Windows
 host support is not part of this release's verified scope.
 
-`0.1.0-beta.1` is staged at npm and still needs human approval. The public
-`0.0.0-stage` package is npm's placeholder, not an installable AutoCode release.
-Do not treat an uploaded stage, a passing rehearsal, or a placeholder as a live
-release. Review any earlier staged candidate independently; it is not an artifact
-produced by the controlled workflow below.
+`0.1.0-beta.1` is public at npm. On 20 October 2026 the maintainer selected it for
+`latest` as well as `next`, replacing the `0.0.0-stage` placeholder as the default
+installation. Its initial publication predates the controlled workflow below.
+Do not treat a future uploaded stage or passing rehearsal as a live release;
+verify that exact version in the public registry after human approval.
+
+This checkout prepares `0.1.0-beta.2`, a README and product-screenshot update.
+Its version is reserved here for the next controlled release; it is not public
+until the staged artifact receives human approval.
 
 ## Delivery contract
 
@@ -18,7 +22,9 @@ It typechecks and tests on both supported Node versions, lints the workflows wit
 checksummed actionlint 1.7.12, and builds JavaScript and **one npm tarball**. Its
 `artifacts/manifest.json` records the source commit, repository, package name and
 version, MIT licence, release channel, filename, SHA-256, SHA-512 integrity, and
-build Node/npm versions. Prereleases use `next`; stable versions use `latest`.
+build Node/npm versions. New prereleases use `next`; stable versions use `latest`.
+Making a published prerelease the default `latest` version is a separate,
+explicit maintainer decision. The staging workflow does not change existing tags.
 
 The uploaded package contains `package.tgz` and `manifest.json`. CI passes its
 immutable GitHub artifact ID to every consumer. Fresh-cache installation checks

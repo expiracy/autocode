@@ -1,23 +1,31 @@
 # AutoCode
 
-Model-based shell command approval for OpenCode v2. AutoCode reviews commands that would otherwise need your approval, using the coding model by default or a separate model you choose. Configure it from `/autocode config` without changing your coding model, and inspect recent reviews with `/autocode log`.
+Model-based shell command approval for OpenCode 2. AutoCode reviews commands that would otherwise need your approval, using your coding model or a separate reviewer you choose. Existing permission denials and hard policies stay enforced.
 
-**Release status:** `opencode-autocode@0.1.0-beta.1` is staged at npm and awaits human approval. It is not available for installation yet; the public `0.0.0-stage` placeholder is not the plugin. Use a local checkout until the beta is approved. Beta releases use the `next` tag.
+![AutoCode config dialog with inherited reviewer model, timeout, and context controls](https://raw.githubusercontent.com/expiracy/autocode/18f67fb23dda26c5665400b4cb6bb54f0f3d707a/docs/assets/settings.png)
+
+*The native config dialog in OpenCode 2.0.28, shown with AutoCode's defaults.*
+
+- **Choose your reviewer.** Inherit the coding model and variant, or select a separate connected model for approvals.
+- **Configure it in OpenCode.** Use `/autocode config` to change the reviewer, timeout, context budget, or enabled state.
+- **Inspect each review.** Use `/autocode log` to see recent decisions, reasons, models, and timings for the current project.
+
+**Beta release channel:** [`opencode-autocode@next`](https://www.npmjs.com/package/opencode-autocode). The install example follows this channel. To pin a particular release, replace `next` with an exact version from [npm's version list](https://www.npmjs.com/package/opencode-autocode?activeTab=versions).
 
 Tested with **OpenCode 2.0.28** and its v2 plugin API on Linux and macOS. OpenCode v1 is not supported. Local development requires Node.js 22.18 or newer; CI covers Node.js 22.18 and 24.
 
 ## Install
 
-### From npm, after release approval
+### From npm
 
-Once the beta is publicly available, merge this registration into your global `~/.config/opencode/opencode.jsonc` or `opencode.json`. OpenCode installs the package from the `plugins` entry; a separate `npm install -g` is unnecessary.
+Merge this registration into your global `~/.config/opencode/opencode.jsonc` or `opencode.json`. OpenCode installs the package from the `plugins` entry; a separate `npm install -g` is unnecessary.
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
     {
-      "package": "opencode-autocode@0.1.0-beta.1",
+      "package": "opencode-autocode@next",
       "options": {}
     }
   ]
@@ -61,8 +69,6 @@ AutoCode only reviews the `shell` requests OpenCode resolves to `ask`. If your c
 
 Restart OpenCode, enter `/autocode config`, and choose **Save settings** after any changes. You can also open **AutoCode config** from the command palette. The dialog lets you enable reviews, choose an approval model and its variant, adjust the timeout and context budget, and view the review log.
 
-![AutoCode settings in OpenCode 2.0.28](https://raw.githubusercontent.com/expiracy/autocode/main/docs/assets/settings.png)
-
 Try this harmless prompt in a new conversation:
 
 > Run exactly this shell command: `printf autocode-check`. Then report its output.
@@ -89,7 +95,9 @@ timestamp, reviewer model and variant, duration, reason, and session ID. **Refre
 loads newer entries, and **Clear review log** removes this project's history after
 confirmation. The settings editor also has a **View review log** action.
 
-![AutoCode review details in OpenCode 2.0.28](https://raw.githubusercontent.com/expiracy/autocode/main/docs/assets/review-log.png)
+![AutoCode review details showing a verdict, reviewer model, reason, and timing](https://raw.githubusercontent.com/expiracy/autocode/18f67fb23dda26c5665400b4cb6bb54f0f3d707a/docs/assets/review-log.png)
+
+*Demonstration review in OpenCode 2.0.28 using an isolated test provider. [Capture details](https://github.com/expiracy/autocode/blob/18f67fb23dda26c5665400b4cb6bb54f0f3d707a/docs/assets/README.md).*
 
 Entries record AutoCode's reviewer verdict or manual fallback. They do not prove
 that a command ran: OpenCode can still reject a reviewer-approved command through
@@ -191,7 +199,7 @@ If the problem persists, [open an issue](https://github.com/expiracy/autocode/is
 
 ## Update or uninstall
 
-The npm configuration above pins the beta version. After a newer version is published, change the package version in the registration and restart OpenCode. Review the [changelog](CHANGELOG.md) first. While using a local checkout, pull the desired revision, run `npm ci` and `npm run build`, then restart OpenCode.
+The npm example uses the `next` beta channel. For a fixed version, replace the registration's `package` with an exact specifier such as `opencode-autocode@0.1.0-beta.1`. Review the [changelog](CHANGELOG.md) before upgrading, and restart OpenCode after changing its registration. While using a local checkout, pull the desired revision, run `npm ci` and `npm run build`, then restart OpenCode.
 
 To pause automatic reviews, disable AutoCode in settings. To uninstall, clear any review history you want removed through `/autocode log`, remove its entry from the global `plugins` array and any project registrations, then restart OpenCode. Keep your permission rules and policies as needed for normal OpenCode approvals. Optional settings backups and OpenCode's plugin storage remain after removing a registration.
 
