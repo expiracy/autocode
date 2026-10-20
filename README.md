@@ -1,10 +1,10 @@
-# AutoCode
+<h1><img src="https://raw.githubusercontent.com/expiracy/autocode/3cc6181ca9e7f02c8511a71dc1a1c054272c5d91/docs/assets/logo.svg" alt="AutoCode" width="460"></h1>
 
 Model-based shell command approval for OpenCode 2. AutoCode reviews commands that would otherwise need your approval, using your coding model or a separate reviewer you choose. Existing permission denials and hard policies stay enforced.
 
-![AutoCode config dialog with inherited reviewer model, timeout, and context controls](https://raw.githubusercontent.com/expiracy/autocode/18f67fb23dda26c5665400b4cb6bb54f0f3d707a/docs/assets/settings.png)
+![AutoCode settings popup over the full OpenCode application](https://raw.githubusercontent.com/expiracy/autocode/3cc6181ca9e7f02c8511a71dc1a1c054272c5d91/docs/assets/settings.png)
 
-*The native config dialog in OpenCode 2.0.28, shown with AutoCode's defaults.*
+*The native settings popup inside OpenCode 2.0.28. The full application remains visible behind it; the example uses an isolated test profile.*
 
 - **Choose your reviewer.** Inherit the coding model and variant, or select a separate connected model for approvals.
 - **Configure it in OpenCode.** Use `/autocode config` to change the reviewer, timeout, context budget, or enabled state.
@@ -95,9 +95,9 @@ timestamp, reviewer model and variant, duration, reason, and session ID. **Refre
 loads newer entries, and **Clear review log** removes this project's history after
 confirmation. The settings editor also has a **View review log** action.
 
-![AutoCode review details showing a verdict, reviewer model, reason, and timing](https://raw.githubusercontent.com/expiracy/autocode/18f67fb23dda26c5665400b4cb6bb54f0f3d707a/docs/assets/review-log.png)
+![AutoCode review details popup with the OpenCode conversation visible behind it](https://raw.githubusercontent.com/expiracy/autocode/3cc6181ca9e7f02c8511a71dc1a1c054272c5d91/docs/assets/review-log.png)
 
-*Demonstration review in OpenCode 2.0.28 using an isolated test provider. [Capture details](https://github.com/expiracy/autocode/blob/18f67fb23dda26c5665400b4cb6bb54f0f3d707a/docs/assets/README.md).*
+*Demonstration review in OpenCode 2.0.28 using an isolated test provider. [Capture details](https://github.com/expiracy/autocode/blob/3cc6181ca9e7f02c8511a71dc1a1c054272c5d91/docs/assets/README.md).*
 
 Entries record AutoCode's reviewer verdict or manual fallback. They do not prove
 that a command ran: OpenCode can still reject a reviewer-approved command through
