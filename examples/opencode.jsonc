@@ -4,7 +4,7 @@
   // Pin the beta version; beta releases use the npm "next" tag.
   "plugins": [
     {
-      "package": "opencode-autocode@0.1.0-beta.1",
+      "package": "opencode-autocode@next",
       // For local development, use your absolute checkout path instead:
       // "package": "/absolute/path/autocode",
       // Build a local checkout with npm ci and npm run build before loading it.
