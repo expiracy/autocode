@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-beta.3 — Unreleased
+
+- Add a manual **Publish npm package** workflow: rehearsal by default, direct OIDC publication after required human approval in the protected `npm-production` GitHub environment.
+- Require the immutable version tag to identify the exact source commit, publish the CI-tested tarball without repacking or lifecycle scripts, and verify public registry integrity with provenance enabled.
+- Retain the separate npm staging path. `0.1.0-beta.2` was submitted through OIDC staging on 20 October 2026; this fresh version avoids reusing that reserved version.
+
 ## 0.1.0-beta.2 — Unreleased
 
 - Show native error notifications for settings, log, status, and unexpected UI failures, while keeping drafts and retry controls available. Notification failures do not repeat saved changes.

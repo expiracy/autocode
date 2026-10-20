@@ -11,10 +11,11 @@ installation. Its initial publication predates the controlled workflow below.
 Do not treat a future uploaded stage or passing rehearsal as a live release;
 verify that exact version in the public registry after human approval.
 
-This checkout prepares `0.1.0-beta.2` with README and product-screenshot updates,
-clearer error feedback, and a manual GitHub draft-release action. Its version is
-reserved here for the next controlled release; it is not public until the staged
-artifact receives human approval.
+This checkout prepares `0.1.0-beta.3` for the GitHub Actions publication path.
+`0.1.0-beta.2` was submitted to npm staging through OIDC on 20 October 2026 and
+remains a separate, reserved candidate. This fresh version includes those
+product and error-feedback changes plus the new publication workflow. Check the
+public registry for actual release status.
 
 ## Delivery contract
 
@@ -83,15 +84,16 @@ them.
 
 Use GitHub-hosted runners. The staging job pins npm 12.2.0, satisfying staged
 publishing's npm 11.15/Node 22.14 minimum. It has `contents: read` and
-`id-token: write`; no other job gets an OIDC token. The delivery helper rejects
+`id-token: write`; other jobs in the staging workflow do not get an OIDC token. The delivery helper rejects
 missing OIDC identity and token authentication instead of falling back to a
-stored npm key. Do not add `NPM_TOKEN`, `NODE_AUTH_TOKEN`, npm credentials, a
-final-publication job, or a direct-publish fallback.
+stored npm key. Do not add `NPM_TOKEN`, `NODE_AUTH_TOKEN`, npm credentials, or a
+direct-publish fallback to staging. Direct publication uses the separate,
+explicitly requested and human-gated `publish.yml` path below.
 
 Check npm's package publishing access settings too. Requiring 2FA and disallowing
 traditional publish tokens keeps all automated delivery on the approved OIDC
-path. Review existing trusted publishers so another entry cannot allow direct
-publishing unintentionally. Changing these settings is a maintainer action, not
+path. Review existing trusted publishers so direct publishing is allowed only by the separate `publish.yml` /
+`npm-production` binding, never by the staging binding. Changing these settings is a maintainer action, not
 something a rehearsal verifies.
 
 ## Prepare the candidate
@@ -185,15 +187,78 @@ Review the draft's notes, source commit, asset checksums, and CI evidence before
 publishing it manually. GitHub draft delivery does not stage or publish to npm.
 Npm delivery and human 2FA approval use the separate steps above and below.
 
+## Publish from GitHub Actions
+
+**Publish npm package** (`publish.yml`) publishes directly after a human approves
+its `npm-production` job in GitHub. It defaults to rehearsal and reuses the full
+CI pipeline's single tested artifact. This path does not approve or reject npm
+stages; staged versions share npm's version namespace and need their existing
+npm approval path. Use a fresh version when changing delivery paths.
+
+### Configure the production gate once
+
+- Create GitHub environment **npm-production** with required reviewer
+  **expiracy**, administrator bypass disabled, and a branch rule for **main**
+  only (no tag rule). Self-review must remain available for this solo maintainer
+  to approve a run they dispatched. The approval is a human action in GitHub.
+- Configure a separate npm trusted publisher for `expiracy/autocode`, workflow
+  **publish.yml**, environment **npm-production**, with direct publish enabled.
+  Keep the existing `release.yml` binding stage-only. No npm token or environment
+  secret is required; do not grant standalone dist-tag management.
+
+```sh
+npm trust github opencode-autocode \
+  --repository=expiracy/autocode --file=publish.yml \
+  --environment=npm-production --allow-publish
+```
+
+Review npm trust and GitHub environment settings after setup. The environment
+name in YAML alone does not establish human protection. On 20 October 2026 the
+GitHub production gate was configured with these reviewer, bypass, and main-only
+rules; a future maintainer must recheck the live settings.
+
+### Run the release
+
+1. Merge the exact unused version and release notes through passing required CI.
+2. Run **Prepare GitHub release** with `delivery=draft` at that source revision.
+   It creates immutable `v<version>` and a reviewable draft package. Publication
+   fails unless this tag resolves to the exact checked-out source commit.
+3. Run **Publish npm package** with its default `rehearsal` and inspect the
+   source, version, channel, integrity, and artifact diagnostics.
+4. Run it again with `delivery=publish`. All artifact checks run before GitHub
+   presents **Review deployments** for `npm-production`.
+5. Review the concrete artifact, then approve that deployment in GitHub. The job
+   obtains an environment-bound OIDC identity and publishes the existing archive
+   with provenance and lifecycle scripts disabled. It never rebuilds or repacks.
+
+```sh
+gh workflow run publish.yml --ref main -f delivery=rehearsal
+gh workflow run publish.yml --ref main -f delivery=publish
+```
+
+Only the production job has OIDC permission. Its helper rejects an unexpected
+repository, branch, unprotected source, workflow, environment, or legacy npm
+credentials. A known public version must have identical integrity and still
+resolve through the intended channel for a rerun to count as successful; it does
+not overwrite versions or move tags to make a rerun pass. Registry errors fail
+closed. A public integrity mismatch requires investigation and a new version.
+
+The publish request does not approve its own environment deployment. A maintainer
+must perform the final GitHub approval; do not bypass the gate with an API call.
+After publication, run the registry verification below and inspect npm provenance.
+Publishing a prerelease to `next` does not promote `latest`; that remains a
+separate maintainer decision.
+
 ## Human publication and verification
 
-A package maintainer must review the stage in npm's **Staged Packages** tab,
+For the staged path, a package maintainer must review the stage in npm's **Staged Packages** tab,
 compare it with the tested workflow artifact, and approve it with 2FA. Verify
 name, version, source commit, integrity, package contents, release notes, and the
 intended `next` or `latest` channel before approval. npm OIDC cannot perform this
-approval, and no repository workflow attempts it.
+approval. The separate direct-publication workflow publishes a fresh version
+after GitHub approval instead of attempting stage approval.
 
-After the human approval:
+After either publication path completes:
 
 1. Verify registry metadata and integrity for that exact version and inspect
    `npm dist-tag ls opencode-autocode`. Beta versions must remain on `next`.
@@ -202,7 +267,7 @@ After the human approval:
    exact package name/version, and runs the native suite. It cannot fall back to
    the local build or the tested prepublication archive.
 3. Only after actual registry installation succeeds, mark the published-package
-   scenario complete and update the README's staged status. Review the matching
+   scenario complete and update release status in the changelog. Review the matching
    GitHub draft and its existing source tag, add links to npm and the tested
    workflow run, and publish the draft manually. Do not create a second tag or
    replace a tag created by the draft workflow.

@@ -1,0 +1,124 @@
+name: Publish npm package
+
+on:
+  workflow_dispatch:
+    inputs:
+      delivery:
+        description: Rehearse by default; publish requires approval of the npm-production environment
+        required: true
+        type: choice
+        default: rehearsal
+        options:
+          - rehearsal
+          - publish
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  request:
+    name: Validate publication request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require protected upstream main for publication
+        env:
+          DELIVERY: ${{ inputs.delivery }}
+        run: |
+          case "$DELIVERY" in
+            rehearsal) ;;
+            publish)
+              test "$GITHUB_REPOSITORY" = expiracy/autocode
+              test "$GITHUB_REF" = refs/heads/main
+              test "$GITHUB_REF_PROTECTED" = true
+              ;;
+            *) exit 1 ;;
+          esac
+
+  checks:
+    name: Test the publication artifact
+    needs: request
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  review:
+    name: Verify publication candidate
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.checks.outputs.artifact-id }}
+          path: ${{ runner.temp }}/publication
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Rehearse the exact tested artifact without npm delivery
+        run: node scripts/publish-artifact.mjs rehearsal --artifact "$RUNNER_TEMP/publication/package.tgz" --manifest "$RUNNER_TEMP/publication/manifest.json" --commit "$GITHUB_SHA" --diagnostics "$RUNNER_TEMP/publication-review"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: npm-publication-review-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/publication-review/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish the approved tested artifact
+    if: inputs.delivery == 'publish' && github.repository == 'expiracy/autocode' && github.ref == 'refs/heads/main' && github.ref_protected
+    needs: [checks, review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: npm-production
+      url: https://www.npmjs.com/package/opencode-autocode
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AUTOCODE_PUBLISH_ACTION: ${{ inputs.delivery }}
+      AUTOCODE_PUBLISH_ENVIRONMENT: npm-production
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.checks.outputs.artifact-id }}
+          path: ${{ runner.temp }}/publication
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Install the pinned OIDC-capable npm CLI
+        run: npm install --global npm@12.2.0 --ignore-scripts --no-audit --no-fund
+      - name: Publish the tagged artifact through trusted publishing
+        run: node scripts/publish-artifact.mjs publish --artifact "$RUNNER_TEMP/publication/package.tgz" --manifest "$RUNNER_TEMP/publication/manifest.json" --commit "$GITHUB_SHA" --diagnostics "$RUNNER_TEMP/publication-result"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: diagnostics-npm-publish-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/publication-result/
+          retention-days: 14
+          if-no-files-found: ignore
