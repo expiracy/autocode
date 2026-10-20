@@ -5,19 +5,33 @@ Node.js 22.18 or newer and the OpenCode v2 plugin API. CI checks Node.js 22.18 a
 24 and runs native integrations with OpenCode 2.0.28 on Linux and macOS. Windows
 host support is not part of this release's verified scope.
 
-`0.1.0-beta.1` is public at npm. On 20 October 2026 the maintainer selected it for
-`latest` as well as `next`, replacing the `0.0.0-stage` placeholder as the default
-installation. Its initial publication predates the controlled workflow below.
-Do not treat a future uploaded stage or passing rehearsal as a live release;
-verify that exact version in the public registry after human approval.
+`0.1.0-beta.2` is public on npm under `next`, following human approval of its
+OIDC stage on 20 October 2026. Its registry archive and native installation are
+verified below. The earlier `0.1.0-beta.1` first shipped on 18 October and replaced
+the `0.0.0-stage` placeholder as `latest` on 20 October. Check the live registry
+tags when selecting the default install version.
 
-This checkout prepares `0.1.0-beta.4` for the GitHub Actions publication path.
-The earlier `v0.1.0-beta.3` tag identifies its failed draft-upload candidate and
-remains unchanged. The next version includes the HTTP upload fix.
-`0.1.0-beta.2` was submitted to npm staging through OIDC on 20 October 2026 and
-remains a separate, reserved candidate. This fresh version includes those
-product and error-feedback changes plus the new publication workflow. Check the
-public registry for actual release status.
+This checkout prepares the still-unreleased `0.1.0-beta.4` for the GitHub Actions
+publication path. The earlier `v0.1.0-beta.3` tag identifies its failed draft-upload
+candidate and remains unchanged. The next version includes the HTTP upload fix.
+A passing rehearsal or uploaded stage alone does not establish publication.
+
+## Published beta.2 verification
+
+| Item | Verified result on 20 October 2026 |
+| --- | --- |
+| Public package | [`opencode-autocode@0.1.0-beta.2`](https://www.npmjs.com/package/opencode-autocode/v/0.1.0-beta.2), recorded by npm at 20:49:23 UTC; MIT licence and `next` channel. |
+| Source | [`7a9f523d83258fe82b3d63f35e1dfa55e60586bf`](https://github.com/expiracy/autocode/commit/7a9f523d83258fe82b3d63f35e1dfa55e60586bf), tagged `v0.1.0-beta.2`. |
+| Tested stage | [CI and OIDC staging run](https://github.com/expiracy/autocode/actions/runs/39472166246); stage `1039ff01-a667-462c-be10-3813645a0e38` was approved by the maintainer in npm. |
+| Archive | The 59-file public tarball is byte-identical to the tested stage; SHA-256 `18c9f1f39cf3684d3780edc47236db0cb975de9c1b3d67105b4caa620e60818b`. |
+| Installed check | Fresh public-registry installation and all 20 native checks passed on macOS arm64, Node.js 26.3.0, and OpenCode 2.0.28. |
+
+The post-publication native check used isolated profiles and a local scripted
+provider for all 22 model requests, with no external model calls. It exercised
+inherited and separate reviewer models, a real harmless shell call, settings,
+history, and hard-deny precedence. These results verify this published package;
+they do not certify future candidates or add host/platform support. Product
+logos, screenshots, and the Ko-fi link were also verified in the public archive.
 
 ## Delivery contract
 
@@ -83,6 +97,10 @@ them.
    trust entry with `npm trust list opencode-autocode` or npm's package settings.
    npm requires a new trust entry to be validated within two days. If it expires,
    recreate it when an explicitly requested staging run is ready.
+
+The `release.yml` / `npm-staging` binding was configured, inspected as stage-only,
+and used successfully for beta.2 on 20 October 2026. This does not configure the
+separate production binding or change npm's legacy-token access policy.
 
 Use GitHub-hosted runners. The staging job pins npm 12.2.0, satisfying staged
 publishing's npm 11.15/Node 22.14 minimum. It has `contents: read` and
