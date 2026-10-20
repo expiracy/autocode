@@ -55,7 +55,9 @@
     "docs/assets/logo.svg",
     "docs/assets/logo-dark.svg",
     "docs/assets/logo-light.svg",
-    "examples"
+    "examples",
+    "docs/configuration.md",
+    "docs/troubleshooting.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

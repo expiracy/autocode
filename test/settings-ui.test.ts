@@ -60,6 +60,7 @@ test("opens global settings with readable current values and closes without savi
   ]);
   assert.equal(h.menus[0]?.options.find(row => row.value === "save")?.disabled, true);
   assert.deepEqual(h.saves, []);
+  assert.deepEqual(h.toasts, [], "Closing without changes is not an error");
 });
 
 test("keeps an enabled toggle in a draft until Save is selected", async () => {
@@ -107,6 +108,7 @@ test("rejects an invalid timeout without changing other draft edits and accepts 
   assert.match(h.alerts[0]?.message ?? "", /timeoutMs.*1.*300000/);
   assert.deepEqual(h.saves[0]?.options, { enabled: false, timeoutMs: 45000 });
   assert.equal(h.prompts.length, 2);
+  assert.deepEqual(h.toasts[0], { title: "Invalid AutoCode setting", message: "Enter a whole number from 1 to 300000 milliseconds.", variant: "error", duration: 8000 });
 });
 
 test("validates and saves the context character budget", async () => {
@@ -139,7 +141,10 @@ test("keeps the draft visible when the server rejects a save", async () => {
   assert.match(h.alerts[0]?.message ?? "", /Settings changed on disk/);
   assert.equal(h.menus[2]?.options.find(row => row.value === "enabled")?.description, "Disabled");
   assert.deepEqual(h.saves[0]?.options, { enabled: false });
-  assert.equal(h.toasts.length, 1);
+  assert.deepEqual(h.toasts, [
+    { title: "Unable to save AutoCode settings", message: "Your draft is kept. Retry Save or reopen /autocode config if settings changed.", variant: "error", duration: 8000 },
+    { title: "AutoCode settings saved", message: "Global settings apply to new command reviews.", variant: "success" },
+  ]);
 });
 
 test("shows an unavailable message when global settings cannot be read", async () => {
@@ -265,6 +270,7 @@ test("an already cancelled editor does not issue a settings request", async () =
   await editSettings(h.ctx, h.rpc, () => true, h.controller.signal);
   assert.deepEqual(h.loads, []);
   assert.deepEqual(h.saves, []);
+  assert.deepEqual(h.toasts, []);
 });
 
 test("settings remains discoverable while the command palette owns modal input", async () => {
@@ -387,4 +393,100 @@ test("shares the dialog lifecycle guard across config and log loads", async () =
   await config?.run();
   assert.equal(h.menus.length, 1, "A new dialog can open after reconnection");
   if (cleanup) await cleanup();
+});
+
+
+test("reports an unavailable settings load with a brief error notification that excludes server payloads", async () => {
+  const h = harness([]);
+  h.rpc.settings = async () => { throw new Error("Private server response: Bearer fixture-secret " + "x".repeat(2000)); };
+  await editSettings(h.ctx, h.rpc, () => true, h.controller.signal);
+  assert.deepEqual(h.toasts, [{
+    title: "AutoCode settings unavailable", message: "Check your global plugin registration, then run /autocode config again.", variant: "error", duration: 8000,
+  }]);
+  assert.equal(h.alerts.length, 1, "The existing detailed explanation remains available");
+  assert.deepEqual(h.saves, []);
+});
+
+
+test("reports an unexpected command failure once without its payload and permits the next command", async () => {
+  const h = harness(["close"]);
+  let layer: KeymapLayer | undefined;
+  const select = h.ctx.ui.dialog.select.bind(h.ctx.ui.dialog);
+  let attempts = 0;
+  const ctx = {
+    ...h.ctx,
+    ui: { ...h.ctx.ui, dialog: { ...h.ctx.ui.dialog, async select(menu: DialogSelectOptions<unknown>) {
+      const attempt = attempts++;
+      if (attempt === 0) throw new Error("Private server response: Bearer fixture-secret " + "x".repeat(2000));
+      if (attempt === 2) throw new DOMException("Dialog cancelled", "AbortError");
+      return select(menu);
+    } } },
+    keymap: { layer(factory: () => KeymapLayer) { layer = factory(); } },
+    client: { rpc() { return { ...h.rpc, events: { on() { return () => {}; } } }; } },
+    data: { ...h.ctx.data, on() { return () => {}; } },
+  } as unknown as Context;
+  const cleanup = await tui.setup(ctx);
+  try {
+    const command = layer?.commands?.find(command => command.id === "autocode.config");
+    assert.ok(command);
+    await assert.doesNotReject(async () => { await command.run("config"); });
+    assert.deepEqual(h.toasts, [{ title: "AutoCode command failed", message: "Try the command again. If it keeps failing, restart OpenCode.", variant: "error", duration: 8000 }]);
+    await command.run("config");
+    assert.equal(h.menus.length, 1, "The failed command releases its lifecycle guard");
+    assert.equal(h.toasts.length, 1);
+    await command.run("config");
+    assert.equal(h.toasts.length, 1, "Expected dialog cancellation is not an error");
+    assert.deepEqual(h.saves, []);
+  } finally { if (cleanup) await cleanup(); }
+});
+
+
+test("does not report an explicitly cancelled settings request as an error", async () => {
+  const h = harness([]);
+  h.rpc.settings = async () => { throw new DOMException("Request cancelled", "AbortError"); };
+  await editSettings(h.ctx, h.rpc, () => true, h.controller.signal);
+  assert.deepEqual(h.toasts, []);
+  assert.deepEqual(h.alerts, []);
+  assert.deepEqual(h.saves, []);
+});
+
+
+test("does not report or retry a committed save when the success notification fails", async () => {
+  const h = harness(["enabled", "save"]);
+  h.ctx.ui.toast.show = () => { throw new Error("Host notifications unavailable"); };
+  await assert.doesNotReject(async () => { await editSettings(h.ctx, h.rpc, () => true, h.controller.signal); });
+  assert.deepEqual(h.saves, [{ revision: "revision-1", options: { enabled: false } }]);
+  assert.deepEqual(h.alerts, [], "A notification failure must not claim the save failed");
+  assert.equal(h.menus.length, 2, "A successful save must not offer another Save attempt");
+});
+
+
+test("does not report an explicitly cancelled settings save as a failed mutation", async () => {
+  const h = harness(["enabled", "save", "close"]);
+  let attempts = 0;
+  h.rpc.saveSettings = async () => { attempts++; throw new DOMException("Request cancelled", "AbortError"); };
+  await editSettings(h.ctx, h.rpc, () => true, h.controller.signal);
+  assert.equal(attempts, 1);
+  assert.deepEqual(h.toasts, []);
+  assert.deepEqual(h.alerts, []);
+});
+
+
+test("retains the settings error explanation when native toast delivery is unavailable", async () => {
+  const h = harness([]);
+  h.ctx.ui.toast.show = () => { throw new Error("Host notifications unavailable"); };
+  h.rpc.settings = async () => { throw new Error("Missing global plugin registration"); };
+  await editSettings(h.ctx, h.rpc, () => true, h.controller.signal);
+  assert.equal(h.alerts[0]?.title, "AutoCode settings unavailable");
+  assert.match(h.alerts[0]?.message ?? "", /Missing global plugin registration/);
+  assert.deepEqual(h.saves, []);
+});
+
+test("does not notify a settings failure after the originating editor becomes stale", async () => {
+  const h = harness([]);
+  let current = true;
+  h.rpc.settings = async () => { current = false; throw new Error("Late settings failure"); };
+  await editSettings(h.ctx, h.rpc, () => current, h.controller.signal);
+  assert.deepEqual(h.toasts, []);
+  assert.deepEqual(h.alerts, []);
 });

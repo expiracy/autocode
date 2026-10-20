@@ -2,6 +2,10 @@
 
 ## 0.1.0-beta.2 — Unreleased
 
+- Show native error notifications for settings, log, status, and unexpected UI failures, while keeping drafts and retry controls available. Notification failures do not repeat saved changes.
+- Add a manual GitHub release rehearsal and draft action, with immutable version tags and the exact CI-tested package, manifest, and checksums. Human publication remains separate.
+- Shorten the README, preserve detailed configuration and troubleshooting guides, and add Ko-fi support links.
+
 - Present the native settings and review screenshots in the npm README, with
   versioned image links and demonstration captions.
 - Correct installation and release status now that the first beta is public.

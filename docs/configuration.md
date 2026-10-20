@@ -1,0 +1,130 @@
+# Configuration and command reviews
+
+[README](../README.md) · [Troubleshooting](troubleshooting.md)
+
+## Enable reviews
+
+AutoCode only reviews the `shell` requests OpenCode resolves to `ask`. If your current rules already ask for shell approval, keep them. To make other shell requests eligible, merge an `ask` rule into your existing `permissions` array:
+
+```jsonc
+"permissions": [
+  { "action": "shell", "resource": "*", "effect": "ask" }
+  // Keep your more specific allow/deny rules after this broad rule.
+]
+```
+
+**Preserve your existing restrictions.** OpenCode uses the last matching permission rule, so appending a broad `ask` rule after a specific `deny` can change OpenCode's resolved decision. See [permission rules](https://opencode.ai/v2/docs/permissions/) and the [complete configuration example](../examples/opencode.jsonc).
+
+Restart OpenCode, enter `/autocode config`, and choose **Save settings** after any changes. You can also open **AutoCode config** from the command palette. The dialog lets you enable reviews, choose an approval model and its variant, adjust the timeout and context budget, and view the review log.
+
+Try this harmless prompt in a new conversation:
+
+> Run exactly this shell command: `printf autocode-check`. Then report its output.
+
+With a working reviewer, the command should run automatically if the model approves it. A model can still ask for manual review; the permission prompt includes an `autocode:` explanation when AutoCode handles the request.
+
+## Commands and review log
+
+| Command | Opens |
+| --- | --- |
+| `/autocode config` | The global settings editor. |
+| `/autocode log` | Recent AutoCode reviews for the current project. |
+| `/autocode status` | The effective project settings, including overrides. |
+| `/autocode help` or `/autocode` | Command help. |
+
+These commands also appear in the command palette and remain available while
+automatic approval is disabled. `/autocode settings` is no longer an alias;
+use `/autocode config` to edit settings. None of these commands calls a model.
+
+The review log keeps the latest **100** reviews in OpenCode's durable plugin
+storage, scoped to the current project location. It survives restarts and settings
+reloads. Search verdicts, reasons, models, or sessions; select an entry for its
+timestamp, reviewer model and variant, duration, reason, and session ID. **Refresh**
+loads newer entries, and **Clear review log** removes this project's history after
+confirmation. The settings editor also has a **View review log** action.
+
+![AutoCode review details popup with the OpenCode conversation visible behind it](https://raw.githubusercontent.com/expiracy/autocode/3cc6181ca9e7f02c8511a71dc1a1c054272c5d91/docs/assets/review-log.png)
+
+*Demonstration review in OpenCode 2.0.28 using an isolated test provider. [Capture details](https://github.com/expiracy/autocode/blob/3cc6181ca9e7f02c8511a71dc1a1c054272c5d91/docs/assets/README.md).*
+
+Entries record AutoCode's reviewer verdict or manual fallback. They do not prove
+that a command ran: OpenCode can still reject a reviewer-approved command through
+a hard policy. Requests already allowed or denied by OpenCode, non-shell requests,
+and requests made while AutoCode is disabled do not create review entries. The
+log starts recording after this version is loaded; it does not import old history.
+
+The log has no raw command, conversation, or provider-error payload fields.
+Reasons are limited to 1000 characters and may quote supplied context, so
+review them before sharing diagnostics. Logging failures do not delay or change
+permission decisions.
+
+## How approval works
+
+For each eligible request, AutoCode obtains the full originating shell command, working directory, and conversation context from OpenCode. It asks the reviewer to return one decision:
+
+| Decision | Result |
+| --- | --- |
+| `allow` | Approve this pending request. |
+| `ask` | Leave OpenCode's normal approval prompt for you. |
+| `deny` | Reject this pending request. |
+
+Each review applies to one request. AutoCode never saves an “Allow always” rule. Existing `allow` decisions skip review. Non-shell permissions follow OpenCode's normal behavior.
+
+### Hard rejections stay enforced
+
+Commands whose resolved OpenCode permission is `deny` stay blocked without calling the reviewer. This also covers compound commands containing a denied resource and conflicts with a saved “Allow always” approval. AutoCode leaves a denial from an earlier permission hook unchanged.
+
+OpenCode's hard [tool policies](https://opencode.ai/v2/docs/policies/) also remain enforced. A policy can reject a command after the reviewer returns `allow`, so a model call may occur before a policy rejection. These guarantees follow OpenCode's normal configuration precedence; AutoCode does not maintain a separate deny list or change permission rules and policies. See the [native permission hook](https://opencode.ai/v2/docs/build/plugins/#permissions).
+
+### Manual review on missing evidence or failure
+
+AutoCode leaves the normal approval prompt when it lacks user intent or the full command, cannot resolve a model, receives an invalid reviewer response, encounters a provider error, or exceeds the deadline. It never approves from parsed permission resources alone: those resources can omit parts of a compound shell command.
+
+All serialized review data must fit `maxContextChars`. AutoCode does not truncate the conversation or command to obtain approval. If the budget is exceeded, compact the session or increase the budget. Compaction may remove evidence of authorization, so the reviewer may still ask.
+
+Model judgments can be wrong. Express firm restrictions with OpenCode permission rules or policies.
+
+## Choose a reviewer
+
+Omit `options.model`, or set it to `"inherit"`, to use the model and variant of the assistant that proposed the command. If that metadata is unavailable, AutoCode falls back to the session model, then OpenCode's default model.
+
+Use **AutoCode config → Approval model** to select another connected model. This does not change the coding model. For JSON configuration, replace the registration's `options` with:
+
+```json
+{
+  "model": "provider/model"
+}
+```
+
+The first slash separates the provider ID from the model ID. For example, `"openrouter/vendor/model"` selects provider `openrouter` and model `vendor/model`. To choose a reasoning variant, use the object form:
+
+```json
+{
+  "model": {
+    "providerID": "provider",
+    "id": "model",
+    "variant": "high"
+  }
+}
+```
+
+Replace these placeholders with a connected, enabled model. `variant` is optional and must be supported by that model; the settings dialog lists available variants.
+
+### Cost and context privacy
+
+AutoCode uses OpenCode's existing provider connections. Each eligible request makes at most one tool-free review call, with the provider's normal latency, limits, and charges. The review includes the command, working directory, and session conversation returned by OpenCode. Choosing another provider sends that context to the selected provider. Review this choice before using AutoCode with sensitive conversations.
+
+## Settings reference
+
+| Option | Default | Accepted values |
+| --- | --- | --- |
+| `enabled` | `true` | Boolean. `false` leaves approvals to OpenCode. |
+| `model` | Inherit | Omit, use `"inherit"`, use `"provider/model"`, or use `{ "providerID": "…", "id": "…", "variant": "…" }` with optional `variant`. |
+| `timeoutMs` | `30000` | Integer from `1` to `300000`; deadline for the complete review, in milliseconds. |
+| `maxContextChars` | `64000` | Integer from `1000` to `1000000`; maximum serialized review data size, in JSON characters. |
+
+Unknown options, misspelled model fields, empty identifiers, and invalid values fail plugin setup with a configuration error.
+
+The settings dialog edits the existing plugin `options` in your **global** OpenCode configuration. Saving preserves unrelated configuration and comments, and creates a backup under `.autocode/settings-backups/` beside that file. Concurrent edits are detected; reopen settings if the file changed while you were editing. Symlinked profiles must be edited at the original file.
+
+OpenCode reloads saved options for subsequent reviews. Project-specific plugin options still override global defaults, so a global change may not change behavior in a project with an override. Options also remain editable directly as JSON. Closing an edited settings draft offers to discard it or keep editing.

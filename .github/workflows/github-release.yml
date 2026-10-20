@@ -1,0 +1,120 @@
+name: Prepare GitHub release
+
+on:
+  workflow_dispatch:
+    inputs:
+      delivery:
+        description: Rehearse locally, or create a draft GitHub release from the tested artifact
+        type: choice
+        required: true
+        default: rehearsal
+        options:
+          - rehearsal
+          - draft
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    name: Validate GitHub release request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require an explicit draft request from protected upstream main
+        env:
+          DELIVERY: ${{ inputs.delivery }}
+        run: |
+          case "$DELIVERY" in
+            rehearsal) ;;
+            draft)
+              test "$GITHUB_REPOSITORY" = expiracy/autocode
+              test "$GITHUB_REF" = refs/heads/main
+              test "$GITHUB_REF_PROTECTED" = true
+              ;;
+            *) exit 1 ;;
+          esac
+
+  checks:
+    name: GitHub release checks
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  rehearsal:
+    name: Rehearse GitHub release
+    if: inputs.delivery == 'rehearsal'
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.checks.outputs.artifact-id }}
+          path: ${{ runner.temp }}/release
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Generate and verify local release evidence
+        env:
+          GITHUB_RELEASE_DELIVERY: ${{ inputs.delivery }}
+        run: node scripts/github-release.mjs rehearsal --directory "$RUNNER_TEMP/release" --commit "$GITHUB_SHA" --diagnostics "$RUNNER_TEMP/github-release-diagnostics"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: github-release-rehearsal-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/github-release-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  draft:
+    name: Prepare draft GitHub release
+    if: inputs.delivery == 'draft' && github.repository == 'expiracy/autocode' && github.ref == 'refs/heads/main' && github.ref_protected
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.checks.outputs.artifact-id }}
+          path: ${{ runner.temp }}/release
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Create or complete the verified draft
+        env:
+          GITHUB_RELEASE_DELIVERY: ${{ inputs.delivery }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/github-release.mjs draft --directory "$RUNNER_TEMP/release" --commit "$GITHUB_SHA" --diagnostics "$RUNNER_TEMP/github-release-diagnostics"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: github-release-draft-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/github-release-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,4 +1,5 @@
 import type { Context } from "@opencode/plugin/tui/context";
+import { showToast } from "./ui-feedback.ts";
 import type { ReviewLogEntry } from "./review-log.ts";
 import { parseOptions } from "./config.ts";
 import { AUTOCODE_HELP } from "./commands.ts";
@@ -18,7 +19,11 @@ export async function viewReviewLog(ctx: Context, rpc: DiagnosticsRpc, current: 
     if (!active()) return undefined;
     try { return readLog(await rpc.log({}, { location, signal })); }
     catch (error) {
-      if (active()) await ctx.ui.dialog.alert({ title: "AutoCode review log unavailable", message: `${errorMessage(error)}\n\nRun /autocode log to retry.` });
+      if (error instanceof Error && error.name === "AbortError") return undefined;
+      if (active()) {
+        showToast(ctx, { title: "AutoCode review log unavailable", message: "Run /autocode log again, or restart OpenCode if the problem continues.", variant: "error", duration: 8000 });
+        await ctx.ui.dialog.alert({ title: "AutoCode review log unavailable", message: `${errorMessage(error)}\n\nRun /autocode log to retry.` });
+      }
       return undefined;
     }
   };
@@ -59,7 +64,11 @@ export async function viewReviewLog(ctx: Context, rpc: DiagnosticsRpc, current: 
       if (confirmed) {
         try { await rpc.clearLog({}, { location, signal }); view = await load() ?? view; }
         catch (error) {
-          if (active()) await ctx.ui.dialog.alert({ title: "Unable to clear AutoCode review log", message: `${errorMessage(error)}\n\nSelect Clear review log to retry.` });
+          if (error instanceof Error && error.name === "AbortError") return;
+          if (active()) {
+            showToast(ctx, { title: "Unable to clear AutoCode review log", message: "The log could not be cleared. Select Clear review log to retry.", variant: "error", duration: 8000 });
+            await ctx.ui.dialog.alert({ title: "Unable to clear AutoCode review log", message: `${errorMessage(error)}\n\nSelect Clear review log to retry.` });
+          }
         }
       }
       continue;
@@ -96,7 +105,11 @@ export async function showStatus(ctx: Context, rpc: DiagnosticsRpc, current: () 
       message: `Effective project settings: ${location.directory}\nAutomatic approval: ${status.enabled ? "Enabled" : "Disabled"}\nReviewer: ${status.model ? modelLabel(status.model) : "Inherit the coding model and variant"}\nReview timeout: ${status.timeoutMs} ms\nContext budget: ${status.maxContextChars} characters\nReview log: latest ${logLimit} reviews\n\nUse /autocode config to edit global settings. Project overrides may take precedence.`,
     });
   } catch (error) {
-    if (active()) await ctx.ui.dialog.alert({ title: "AutoCode status unavailable", message: `${errorMessage(error)}\n\nRun /autocode status to retry.` });
+    if (error instanceof Error && error.name === "AbortError") return;
+    if (active()) {
+      showToast(ctx, { title: "AutoCode status unavailable", message: "Run /autocode status again, or check the plugin configuration.", variant: "error", duration: 8000 });
+      await ctx.ui.dialog.alert({ title: "AutoCode status unavailable", message: `${errorMessage(error)}\n\nRun /autocode status to retry.` });
+    }
   }
 }
 
