@@ -52,6 +52,9 @@
     "RELEASING.md",
     "docs/assets/settings.png",
     "docs/assets/review-log.png",
+    "docs/assets/logo.svg",
+    "docs/assets/logo-dark.svg",
+    "docs/assets/logo-light.svg",
     "examples"
   ],
   "scripts": {

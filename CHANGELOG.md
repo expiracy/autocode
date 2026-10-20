@@ -5,6 +5,7 @@
 - Present the native settings and review screenshots in the npm README, with
   versioned image links and demonstration captions.
 - Correct installation and release status now that the first beta is public.
+- Add the AutoCode logo and show settings and review popups in the full application viewport.
 
 ## 0.1.0-beta.1 — 2026-10-18
 
