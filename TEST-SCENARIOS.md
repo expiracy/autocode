@@ -54,18 +54,20 @@ context despite the metadata-only storage shape; the UI and README explain this.
 - [x] Install the renamed tarball from an empty npm cache with normal dependency and peer resolution.
 - [x] Run the full native suite from that installation without consumer build scripts.
 - [x] Ship MIT licensing, release metadata, examples, and user documentation in the package.
-- [ ] Verify installation directly from the public npm package after publication.
+- [x] Verify installation directly from the public npm package after publication.
 
-The public version is `opencode-autocode@0.1.0-beta.1`, available through `next`
-and, following explicit maintainer approval on 20 October 2026, `latest`.
-The `0.0.0-stage` placeholder is not the plugin. The published-package smoke
-scenario above remains unchecked until its separate installation check runs.
-The registry installation check downloads dependencies but installs the plugin
-from its local packed tarball; that mode does not test public plugin resolution.
-The GitHub workflows test one artifact and rehearse delivery by default. Only
-explicit staging uses npm OIDC; final publication remains a human action.
-`npm run smoke:published` separately checks public registry installation after
-publication; its checkbox above is marked only after an actual successful run.
+`opencode-autocode@0.1.0-beta.2` was published under `next` on 20 October
+2026 after human approval in npm. Its public tarball matches the tested OIDC
+stage, including the MIT licence, logos, screenshots, and Ko-fi link. Fresh-cache
+installation directly from npm and all 20 native checks passed on macOS arm64
+with Node.js 26.3.0 and OpenCode 2.0.28. All 22 model requests used a local scripted
+provider. See the [source, workflow, and checksum record](RELEASING.md#published-beta2-verification).
+
+The public-package scenario is distinct from the earlier registry installation
+check, which resolves dependencies from npm but installs a local tarball. Future
+candidates still need their own `npm run smoke:published` result after release.
+The workflows rehearse by default; OIDC staging needs an explicit request and
+human npm approval. Direct publication has a separate GitHub approval gate.
 
 ## Controlled CI and delivery
 
@@ -79,8 +81,13 @@ publication; its checkbox above is marked only after an actual successful run.
 - [x] Require the aggregate GitHub Actions check in actual `main` branch protection.
 - [x] Complete a manual rehearsal without npm delivery or OIDC credentials.
 - [x] Restrict npm staging to an explicit request from `main` through the `npm-staging` environment.
-- [ ] Verify npm's external trust binding allows stage-only OIDC with no direct publish or dist-tag privilege.
-- [ ] Obtain human npm review and 2FA approval before a version becomes public.
+- [x] Verify npm's external trust binding allows stage-only OIDC with no direct publish or dist-tag privilege.
+- [x] Obtain human npm review and 2FA approval before a version becomes public.
+
+The `release.yml` / `npm-staging` trusted publisher was configured and inspected
+on 20 October 2026 with stage-publish permission only. The beta.2 stage records
+trusted automation as its publisher. The separate production binding remains
+unconfigured; no claim is made that legacy publishing tokens are disabled.
 
 These delivery scenarios are separate from the plugin's established behavior.
 Mark them complete only after observing the relevant local check, hosted run, or
@@ -99,8 +106,9 @@ credentials or conversation payloads. Local fixtures also verified the actual
 aggregate expression rejects failure, cancellation, and skipping. GitHub's API
 confirmed the required check is bound to the Actions app, enforced for admins,
 and requires an up-to-date PR; the staging environment allows exactly branch
-`main`, with no tag rules or secrets. npm trust and human publication remain
-separate unverified steps above.
+`main`, with no tag rules or secrets. This 19 October run did not verify npm
+trust or human publication; the later beta.2 release record above covers its
+actual OIDC staging, human approval, and public installation.
 
 [Manual Release rehearsal on 19 October 2026](https://github.com/expiracy/autocode/actions/runs/39217634165)
 passed the reusable CI suite and rehearsal verification at main commit

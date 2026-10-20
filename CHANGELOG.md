@@ -9,9 +9,14 @@
 
 - Add a manual **Publish npm package** workflow: rehearsal by default, direct OIDC publication after required human approval in the protected `npm-production` GitHub environment.
 - Require the immutable version tag to identify the exact source commit, publish the CI-tested tarball without repacking or lifecycle scripts, and verify public registry integrity with provenance enabled.
-- Retain the separate npm staging path. `0.1.0-beta.2` was submitted through OIDC staging on 20 October 2026; this fresh version avoids reusing that reserved version.
+- Retain the separate npm staging path. `0.1.0-beta.2` was published from its OIDC stage on 20 October 2026; this fresh version keeps that published version immutable.
 
-## 0.1.0-beta.2 — Unreleased
+## 0.1.0-beta.2 — 2026-10-20
+
+Published to npm under `next` after human approval of the CI-tested OIDC stage.
+The public archive matches the staged bytes; fresh registry installation and all
+20 native checks passed on macOS with OpenCode 2.0.28. See the
+[release verification record](RELEASING.md#published-beta2-verification).
 
 - Show native error notifications for settings, log, status, and unexpected UI failures, while keeping drafts and retry controls available. Notification failures do not repeat saved changes.
 - Add a manual GitHub release rehearsal and draft action, with immutable version tags and the exact CI-tested package, manifest, and checksums. Human publication remains separate.
