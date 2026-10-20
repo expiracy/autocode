@@ -1,3 +1,4 @@
+import { showToast } from "./ui-feedback.ts";
 import * as Plugin from "@opencode/plugin/tui/plugin";
 import { AutoCodeRpc } from "./rpc.ts";
 import { AUTOCODE_HELP, parseAutoCodeCommand, type AutoCodeCommand } from "./commands.ts";
@@ -20,6 +21,8 @@ export default Plugin.define({
         else if (command === "status") await showStatus(ctx, rpc, active, current.signal);
         else if (command === "help") await showHelp(ctx, active, current.signal);
         else await ctx.ui.dialog.alert({ title: "AutoCode commands", message: `Unknown AutoCode command.\n\n${AUTOCODE_HELP}` });
+      } catch (error) {
+        if (active() && !current.signal.aborted && !(error instanceof Error && error.name === "AbortError")) showToast(ctx, { title: "AutoCode command failed", message: "Try the command again. If it keeps failing, restart OpenCode.", variant: "error", duration: 8000 });
       } finally { current.abort(); if (controller === current) controller = undefined; }
     };
     const stop = () => {

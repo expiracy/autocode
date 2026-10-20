@@ -1,4 +1,5 @@
 import type { Context } from "@opencode/plugin/tui/context";
+import { showToast } from "./ui-feedback.ts";
 import { parseOptions } from "./config.ts";
 import type { SettingsView } from "./settings.ts";
 
@@ -17,7 +18,11 @@ export async function editSettings(ctx: Context, rpc: SettingsRpc, current: () =
     if (!view?.path || !view.revision || !view.options || !view.effective || !Array.isArray(view.models)) throw new Error("The server returned no editable AutoCode settings.");
     parseOptions(view.options);
   } catch (error) {
-    if (active()) await ctx.ui.dialog.alert({ title: "AutoCode settings unavailable", message: error instanceof Error ? error.message : String(error) });
+    if (error instanceof Error && error.name === "AbortError") return;
+    if (active()) {
+      showToast(ctx, { title: "AutoCode settings unavailable", message: "Check your global plugin registration, then run /autocode config again.", variant: "error", duration: 8000 });
+      await ctx.ui.dialog.alert({ title: "AutoCode settings unavailable", message: error instanceof Error ? error.message : String(error) });
+    }
     return;
   }
   if (!active()) return;
@@ -56,10 +61,14 @@ export async function editSettings(ctx: Context, rpc: SettingsRpc, current: () =
     else if (selected === "save" && changed) {
       try {
         await rpc.saveSettings({ revision: view.revision, options: draft }, { location, signal });
-        if (active()) ctx.ui.toast.show({ title: "AutoCode settings saved", message: "Global settings apply to new command reviews.", variant: "success" });
+        if (active()) showToast(ctx, { title: "AutoCode settings saved", message: "Global settings apply to new command reviews.", variant: "success" });
         return;
       } catch (error) {
-        if (active()) await ctx.ui.dialog.alert({ title: "Unable to save AutoCode settings", message: `${error instanceof Error ? error.message : String(error)}\n\nYour draft has been kept.` });
+        if (error instanceof Error && error.name === "AbortError") return;
+        if (active()) {
+          showToast(ctx, { title: "Unable to save AutoCode settings", message: "Your draft is kept. Retry Save or reopen /autocode config if settings changed.", variant: "error", duration: 8000 });
+          await ctx.ui.dialog.alert({ title: "Unable to save AutoCode settings", message: `${error instanceof Error ? error.message : String(error)}\n\nYour draft has been kept.` });
+        }
       }
     }
   }
@@ -82,6 +91,8 @@ async function editNumber(ctx: Context, draft: Record<string, unknown>, field: "
       draft[field] = candidate[field];
       return;
     } catch (error) {
+      if (!active()) return;
+      showToast(ctx, { title: "Invalid AutoCode setting", message: timeout ? "Enter a whole number from 1 to 300000 milliseconds." : "Enter a whole number from 1000 to 1000000 characters.", variant: "error", duration: 8000 });
       await ctx.ui.dialog.alert({ title: "Invalid AutoCode setting", message: error instanceof Error ? error.message : String(error) });
     }
   }

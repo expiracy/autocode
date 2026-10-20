@@ -7,6 +7,7 @@ const entry = { id: "review-1", timestamp: "2026-10-16T12:00:00.000Z", sessionID
 function harness(selections: Array<string | undefined>, entries: unknown[] = [entry]) {
   const menus: DialogSelectOptions<string>[] = [];
   const alerts: Array<{ title: string; message: string }> = [];
+  const toasts: unknown[] = [];
   const calls: Array<{ method: string; request: unknown }> = [];
   const confirms: unknown[] = [];
   const answers: Array<boolean | undefined> = [];
@@ -21,13 +22,13 @@ function harness(selections: Array<string | undefined>, entries: unknown[] = [en
     },
     async alert(input: { title: string; message: string }) { alerts.push(input); },
     async confirm(input: unknown) { confirms.push(input); return answers.shift(); },
-  } } } as unknown as Context;
+  }, toast: { show(input: unknown) { toasts.push(input); } } } } as unknown as Context;
   const rpc: DiagnosticsRpc = {
     async log(_input, request) { calls.push({ method: "log", request }); return { entries: state.entries, maxEntries: 100 }; },
     async clearLog(_input, request) { calls.push({ method: "clearLog", request }); state.entries = []; return {}; },
     async status(_input, request) { calls.push({ method: "status", request }); return state.status; },
   };
-  return { ctx, rpc, controller, location, state, menus, alerts, calls, confirms, answers };
+  return { ctx, rpc, controller, location, state, menus, alerts, toasts, calls, confirms, answers };
 }
 
 test("shows searchable review verdicts and their details without implying execution permission", async () => {
@@ -68,6 +69,7 @@ test("explains a log read failure and how to retry", async () => {
   assert.match(h.alerts[0]?.title ?? "", /unavailable/);
   assert.match(h.alerts[0]?.message ?? "", /Storage unavailable/);
   assert.match(h.alerts[0]?.message ?? "", /\/autocode log/);
+  assert.deepEqual(h.toasts, [{ title: "AutoCode review log unavailable", message: "Run /autocode log again, or restart OpenCode if the problem continues.", variant: "error", duration: 8000 }]);
 });
 
 test("keeps the last visible log when refresh or clear fails", async () => {
@@ -81,6 +83,10 @@ test("keeps the last visible log when refresh or clear fails", async () => {
   assert.equal(h.alerts.length, 2);
   assert.match(h.alerts[0]?.message ?? "", /Refresh failed/);
   assert.match(h.alerts[1]?.message ?? "", /Clear failed/);
+  assert.deepEqual(h.toasts, [
+    { title: "AutoCode review log unavailable", message: "Run /autocode log again, or restart OpenCode if the problem continues.", variant: "error", duration: 8000 },
+    { title: "Unable to clear AutoCode review log", message: "The log could not be cleared. Select Clear review log to retry.", variant: "error", duration: 8000 },
+  ]);
   assert.equal(h.menus[2]?.options.some(option => option.value === "entry:review-1"), true);
 });
 
@@ -127,6 +133,7 @@ test("ignores a cancelled log load and skips subsequent diagnostics", async () =
   assert.equal(h.menus.length, 0);
   assert.equal(h.alerts.length, 0);
   assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.toasts, []);
 });
 
 test("does not reload after a pending clear completes in a closed viewer", async () => {
@@ -154,6 +161,7 @@ test("renders an explicit reviewer model and reports status errors with retry gu
   assert.equal(h.alerts[1]?.title, "AutoCode status unavailable");
   assert.match(h.alerts[1]?.message ?? "", /Server disconnected/);
   assert.match(h.alerts[1]?.message ?? "", /\/autocode status/);
+  assert.deepEqual(h.toasts, [{ title: "AutoCode status unavailable", message: "Run /autocode status again, or check the plugin configuration.", variant: "error", duration: 8000 }]);
 });
 
 test("removes terminal escape and bidi control characters from review text", async () => {
@@ -180,4 +188,43 @@ test("rejects status responses missing the effective settings or log limit", asy
   await showStatus(h.ctx, h.rpc, () => true, h.controller.signal);
   assert.equal(h.alerts[0]?.title, "AutoCode status unavailable");
   assert.match(h.alerts[0]?.message ?? "", /invalid.*status/i);
+});
+
+
+test("treats an explicitly cancelled status request as a silent cancellation", async () => {
+  const h = harness([]);
+  h.rpc.status = async () => { throw new DOMException("Request cancelled", "AbortError"); };
+  await showStatus(h.ctx, h.rpc, () => true, h.controller.signal);
+  assert.deepEqual(h.toasts, []);
+  assert.deepEqual(h.alerts, []);
+});
+
+
+test("treats an explicitly cancelled review-log read as a silent cancellation", async () => {
+  const h = harness([]);
+  h.rpc.log = async () => { throw new DOMException("Request cancelled", "AbortError"); };
+  await viewReviewLog(h.ctx, h.rpc, () => true, h.controller.signal);
+  assert.deepEqual(h.toasts, []);
+  assert.deepEqual(h.alerts, []);
+});
+
+
+test("does not report or replay an explicitly cancelled log clear", async () => {
+  const h = harness(["clear", "close"]);
+  h.answers.push(true);
+  let attempts = 0;
+  h.rpc.clearLog = async () => { attempts++; throw new DOMException("Request cancelled", "AbortError"); };
+  await viewReviewLog(h.ctx, h.rpc, () => true, h.controller.signal);
+  assert.equal(attempts, 1);
+  assert.deepEqual(h.toasts, []);
+  assert.deepEqual(h.alerts, []);
+});
+
+
+test("does not classify ordinary reviewer ask and deny decisions as UI errors", async () => {
+  const h = harness(["close"], [{ ...entry, decision: "ask" }, { ...entry, id: "review-2", decision: "deny" }]);
+  await viewReviewLog(h.ctx, h.rpc, () => true, h.controller.signal);
+  assert.deepEqual(h.toasts, []);
+  assert.deepEqual(h.alerts, []);
+  assert.equal(h.menus[0]?.options.filter(option => String(option.value).startsWith("entry:")).length, 2);
 });

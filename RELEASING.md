@@ -11,9 +11,10 @@ installation. Its initial publication predates the controlled workflow below.
 Do not treat a future uploaded stage or passing rehearsal as a live release;
 verify that exact version in the public registry after human approval.
 
-This checkout prepares `0.1.0-beta.2`, a README and product-screenshot update.
-Its version is reserved here for the next controlled release; it is not public
-until the staged artifact receives human approval.
+This checkout prepares `0.1.0-beta.2` with README and product-screenshot updates,
+clearer error feedback, and a manual GitHub draft-release action. Its version is
+reserved here for the next controlled release; it is not public until the staged
+artifact receives human approval.
 
 ## Delivery contract
 
@@ -148,6 +149,42 @@ commit, version, checksum manifest, and npm stage identifier as the review recor
 A failed OIDC exchange or stage submission fails delivery; fix the configuration
 instead of substituting a token.
 
+## Prepare a GitHub draft
+
+The separate **Prepare GitHub release** workflow (`github-release.yml`) defaults
+to a rehearsal. Open GitHub Actions → **Prepare GitHub release** → **Run
+workflow**, select `main`, leave `delivery` at `rehearsal`, and run it. The CLI
+equivalent is:
+
+```sh
+gh workflow run github-release.yml --ref main -f delivery=rehearsal
+```
+
+This invocation runs CI once, downloads the exact tested artifact by its
+immutable ID, and verifies `package.tgz` and `manifest.json` against the source
+commit and checked package version. It generates `RELEASE_NOTES.md` and
+`SHA256SUMS` without calling GitHub's release API. Inspect those files and the
+sanitized `result.json` in the diagnostic artifact retained for 14 days. The
+original package and manifest remain in the CI artifact for 30 days.
+
+When a maintainer explicitly requests a draft, use the same workflow screen on
+`main` and change `delivery` to `draft`, or run:
+
+```sh
+gh workflow run github-release.yml --ref main -f delivery=draft
+```
+
+Draft delivery requires protected `main` in `expiracy/autocode` and successful CI
+in that invocation. Only the draft job has repository write permission. It
+creates the candidate's `v<version>` source tag and a draft GitHub release with
+the verified tarball, original manifest, and `SHA256SUMS`. An existing tag must
+already identify the exact commit. A matching draft can receive missing assets;
+conflicting assets or an already published release fail without replacement.
+
+Review the draft's notes, source commit, asset checksums, and CI evidence before
+publishing it manually. GitHub draft delivery does not stage or publish to npm.
+Npm delivery and human 2FA approval use the separate steps above and below.
+
 ## Human publication and verification
 
 A package maintainer must review the stage in npm's **Staged Packages** tab,
@@ -165,9 +202,10 @@ After the human approval:
    exact package name/version, and runs the native suite. It cannot fall back to
    the local build or the tested prepublication archive.
 3. Only after actual registry installation succeeds, mark the published-package
-   scenario complete, update the README's staged status, and create a matching
-   `vVERSION` source tag and GitHub release notes with links to npm and the tested
-   workflow run.
+   scenario complete and update the README's staged status. Review the matching
+   GitHub draft and its existing source tag, add links to npm and the tested
+   workflow run, and publish the draft manually. Do not create a second tag or
+   replace a tag created by the draft workflow.
 
 Restart the terminal client after upgrading its TUI companion. If registry
 verification fails, investigate and prepare a corrected version; do not claim a
