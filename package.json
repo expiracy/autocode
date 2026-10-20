@@ -1,6 +1,6 @@
 {
   "name": "opencode-autocode",
-  "version": "0.1.0-beta.3",
+  "version": "0.1.0-beta.4",
   "description": "Model-based command approval for OpenCode 2",
   "license": "MIT",
   "repository": {

@@ -11,7 +11,9 @@ installation. Its initial publication predates the controlled workflow below.
 Do not treat a future uploaded stage or passing rehearsal as a live release;
 verify that exact version in the public registry after human approval.
 
-This checkout prepares `0.1.0-beta.3` for the GitHub Actions publication path.
+This checkout prepares `0.1.0-beta.4` for the GitHub Actions publication path.
+The earlier `v0.1.0-beta.3` tag identifies its failed draft-upload candidate and
+remains unchanged. The next version includes the HTTP upload fix.
 `0.1.0-beta.2` was submitted to npm staging through OIDC on 20 October 2026 and
 remains a separate, reserved candidate. This fresh version includes those
 product and error-feedback changes plus the new publication workflow. Check the
@@ -211,6 +213,9 @@ npm trust github opencode-autocode \
   --repository=expiracy/autocode --file=publish.yml \
   --environment=npm-production --allow-publish
 ```
+
+The production npm binding is not yet configured. Create it when a future
+release is ready: npm requires its first successful publish within two days.
 
 Review npm trust and GitHub environment settings after setup. The environment
 name in YAML alone does not establish human protection. On 20 October 2026 the

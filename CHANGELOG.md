@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-beta.4 — Unreleased
+
+- Correct GitHub release-asset HTTP framing by sending the exact verified byte length. A real local HTTP test exercises the installed GitHub CLI with binary and Unicode bytes.
+- Prepare a fresh tagged candidate after the previous Actions run created immutable `v0.1.0-beta.3` and a partial draft before its upload failed. That tag remains unchanged; the previous candidate has not been published to npm.
+
 ## 0.1.0-beta.3 — Unreleased
 
 - Add a manual **Publish npm package** workflow: rehearsal by default, direct OIDC publication after required human approval in the protected `npm-production` GitHub environment.

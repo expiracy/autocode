@@ -132,10 +132,12 @@ export function createGitHubTransport(repository, run = runGh) {
       return binary ? output : JSON.parse(output.toString());
     },
     async upload(releaseId, asset) {
+      // gh cannot infer stdin length; GitHub requires an exact byte count.
       // Send the verified bytes to this fixed release ID; never replace assets.
       await run(["api", "--hostname", "github.com", "--method", "POST",
         `https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${encodeURIComponent(asset.name)}`,
-        "--header", "Content-Type: application/octet-stream", "--input", "-"], asset.bytes);
+        "--header", "Content-Type: application/octet-stream",
+        "--header", `Content-Length: ${asset.bytes.byteLength}`, "--input", "-"], asset.bytes);
     },
   };
 }

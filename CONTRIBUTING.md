@@ -15,6 +15,10 @@ digests for Linux/macOS x64 and arm64. Its first run downloads the official
 archive; later runs verify the archive cached in the system temporary directory.
 It does not install a global tool or require npm development dependencies.
 
+The release-upload HTTP regression also requires GitHub CLI (`gh`) on `PATH`.
+It uses an isolated configuration, a dummy token, and a loopback server; no
+GitHub sign-in or remote mutation is needed.
+
 ## Native integration test
 
 With an OpenCode v2 binary installed:

@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { once } from "node:events";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { promisify } from "node:util";
 import { assertDraftContext, createGitHubTransport, deliverGitHubRelease, prepareCandidate, sanitizeDiagnostic } from "../scripts/github-release.mjs";
+
+const execute = promisify(execFile);
 
 const candidate = {
   repository: "expiracy/autocode", version: "0.1.0-beta.2", commit: "a".repeat(40),
@@ -226,7 +231,8 @@ test("GitHub transport sends draft JSON as stdin and never requests asset clobbe
   assert.deepEqual(JSON.parse(calls[0].input), { draft: true, body: "Release notes with $HOME and `literal backticks`" });
   assert.deepEqual(calls[1].args, ["api", "--hostname", "github.com", "--method", "POST",
     `https://uploads.github.com/repos/${candidate.repository}/releases/12/assets?name=package.tgz`,
-    "--header", "Content-Type: application/octet-stream", "--input", "-"]);
+    "--header", "Content-Type: application/octet-stream",
+    "--header", `Content-Length: ${candidate.assets[0].bytes.byteLength}`, "--input", "-"]);
   assert.deepEqual(calls[1].input, candidate.assets[0].bytes);
   assert.ok(calls.every(call => !call.args.includes("--clobber")));
 });
@@ -311,4 +317,44 @@ const { createHash } = require("node:crypto");
     const result = JSON.parse(await readFile(path.join(f.options.diagnostics, "result.json"), "utf8"));
     assert.equal(result.outcome, "draft");
   } finally { await f.clean(); }
+});
+
+test("real gh sends a fixed byte length and the exact binary asset to the HTTP upload endpoint", async () => {
+  const configuration = await mkdtemp(path.join(tmpdir(), "github-upload-http-"));
+  const bytes = Buffer.concat([Buffer.from("Binary asset: é 😀\n"), Buffer.from([0, 128, 255]), Buffer.alloc(65536, 90)]);
+  let observed;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    observed = { method: request.method, url: request.url, headers: request.headers, bytes: Buffer.concat(chunks) };
+    const valid = request.headers["content-length"] === String(bytes.length) && request.headers["transfer-encoding"] === undefined;
+    response.writeHead(valid ? 201 : 400, { "content-type": "application/json" });
+    response.end(JSON.stringify(valid ? { id: 123 } : { message: "Bad Content-Length" }));
+  });
+  server.listen(0, "127.0.0.1");
+  try {
+    await once(server, "listening");
+    const transport = createGitHubTransport(candidate.repository, async (args, input) => {
+      const localArgs = args.map(argument => argument.startsWith("https://uploads.github.com/")
+        ? `http://127.0.0.1:${server.address().port}${new URL(argument).pathname}${new URL(argument).search}` : argument);
+      const running = execute("gh", localArgs, { cwd: configuration, timeout: 10_000, encoding: "buffer", env: {
+        PATH: process.env.PATH, GH_TOKEN: "local-contract-fixture", GH_CONFIG_DIR: configuration, XDG_STATE_HOME: path.join(configuration, "state"),
+        GH_PROMPT_DISABLED: "1", NO_PROXY: "127.0.0.1",
+      } });
+      running.child.stdin.on("error", () => {});
+      running.child.stdin.end(input);
+      return (await running).stdout;
+    });
+    await transport.upload(12, { name: "package.tgz", bytes });
+    assert.equal(observed.method, "POST");
+    assert.equal(observed.url, `/repos/${candidate.repository}/releases/12/assets?name=package.tgz`);
+    assert.equal(observed.headers["content-length"], String(bytes.length));
+    assert.equal(observed.headers["transfer-encoding"], undefined);
+    assert.equal(observed.headers["content-type"], "application/octet-stream");
+    assert.deepEqual(observed.bytes, bytes);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    await rm(configuration, { recursive: true, force: true });
+  }
 });
