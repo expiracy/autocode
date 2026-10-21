@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0 — Unreleased
+
+- Prepare the first stable release of AutoCode under the MIT licence, with model-based command review, native configuration, durable review logs, and OpenCode permission and hard-policy enforcement.
+- Use the `latest` npm channel and version-pinned stable installation examples.
+- Include controlled GitHub Actions publication, immutable source tags, verified package assets, explicit channel selection, and the GitHub asset upload fix from the unreleased candidates below.
+
 ## 0.1.0-beta.4 — Unreleased
 
 - Correct GitHub release-asset HTTP framing by sending the exact verified byte length. A real local HTTP test exercises the installed GitHub CLI with binary and Unicode bytes.

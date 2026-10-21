@@ -1,6 +1,6 @@
 {
   "name": "opencode-autocode",
-  "version": "0.1.0-beta.4",
+  "version": "0.1.0",
   "description": "Model-based command approval for OpenCode 2",
   "license": "MIT",
   "repository": {
@@ -22,7 +22,7 @@
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org",
-    "tag": "next"
+    "tag": "latest"
   },
   "type": "module",
   "exports": {

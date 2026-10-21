@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { releaseChannel } from "../scripts/release-artifact.mjs";
 import { deliverPublication, lookupPublishedVersion, assertPublicationTag, publishVerifiedCandidate, preparePublication, sanitizePublishDiagnostic } from "../scripts/publish-artifact.mjs";
 
 const candidate = { manifest: { name: "opencode-autocode", version: "0.1.0-beta.3", sourceCommit: "a".repeat(40), channel: "next", integrity: "sha512-fixture", sha256: "b".repeat(64) }, bytes: Buffer.from("the verified artifact") };
@@ -152,7 +153,7 @@ async function artifactFixture(t, sourceVersion = candidate.manifest.version) {
   await mkdir(path.join(packageDirectory, "dist"), { recursive: true });
   const metadata = { name: candidate.manifest.name, version: sourceVersion, license: "MIT",
     repository: { type: "git", url: "git+https://github.com/expiracy/autocode.git" },
-    publishConfig: { access: "public", registry: "https://registry.npmjs.org", tag: "next" } };
+    publishConfig: { access: "public", registry: "https://registry.npmjs.org", tag: releaseChannel(sourceVersion) } };
   await writeFile(path.join(packageDirectory, "package.json"), JSON.stringify(metadata));
   await writeFile(path.join(packageDirectory, "LICENSE"), "MIT License\n");
   for (const name of ["index.js", "tui.js", "dist/index.js", "dist/tui.js", "dist/rpc.js"]) await writeFile(path.join(packageDirectory, name), "export default {};\n");
@@ -160,7 +161,7 @@ async function artifactFixture(t, sourceVersion = candidate.manifest.version) {
   execFileSync("tar", ["-czf", artifact, "-C", path.join(f.directory, "archive"), "package"]);
   const bytes = await readFile(artifact);
   const manifest = path.join(f.directory, "manifest.json");
-  const record = { ...f.candidate.manifest, version: sourceVersion, schemaVersion: 1, repository: "expiracy/autocode", license: "MIT", filename: "package.tgz",
+  const record = { ...f.candidate.manifest, version: sourceVersion, channel: releaseChannel(sourceVersion), schemaVersion: 1, repository: "expiracy/autocode", license: "MIT", filename: "package.tgz",
     sha256: createHash("sha256").update(bytes).digest("hex"), integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}` };
   await writeFile(manifest, JSON.stringify(record));
   return { ...f, artifact, manifest, record, bytes };
@@ -188,10 +189,10 @@ test("the command rehearses without credentials and retains the exact candidate 
   assert.equal(result.outcome, "rehearsal");
   assert.equal(result.sha256, f.record.sha256);
   assert.equal(result.channel, "latest");
-  assert.equal(result.packageChannel, "next");
+  assert.equal(result.packageChannel, f.record.channel);
   assert.deepEqual(await readFile(f.artifact), f.bytes);
   assert.match(await readFile(summary, "utf8"), /Channel: `latest`/);
-  assert.match(await readFile(summary, "utf8"), /Packaged default channel: `next`/);
+  assert.ok((await readFile(summary, "utf8")).includes(`Packaged default channel: \`${f.record.channel}\``));
   assert.match(await readFile(summary, "utf8"), new RegExp(`v${source.version.replaceAll(".", "\\.")}`));
 });
 

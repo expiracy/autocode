@@ -131,19 +131,19 @@ test("an annotated version tag is accepted only when its final target is the tes
   assert.ok(calls.some(endpoint => endpoint.endsWith(`/git/tags/${"c".repeat(40)}`)));
 });
 
-async function fixture(sourceVersion = "0.1.0-beta.2") {
+async function fixture(sourceVersion = "0.1.0-beta.2", archivedVersion = "0.1.0-beta.2") {
   const directory = await mkdtemp(path.join(tmpdir(), "autocode-github-release-test-"));
   const sourceDirectory = path.join(directory, "source");
   const artifacts = path.join(directory, "artifact");
   await mkdir(sourceDirectory);
   await mkdir(path.join(artifacts, "package/dist"), { recursive: true });
   const metadata = {
-    name: "opencode-autocode", version: "0.1.0-beta.2", license: "MIT",
+    name: "opencode-autocode", version: archivedVersion, license: "MIT",
     repository: { url: "git+https://github.com/expiracy/autocode.git" },
-    publishConfig: { access: "public", registry: "https://registry.npmjs.org", tag: "next" },
+    publishConfig: { access: "public", registry: "https://registry.npmjs.org", tag: archivedVersion.includes("-") ? "next" : "latest" },
   };
   await writeFile(path.join(sourceDirectory, "package.json"), JSON.stringify({ ...metadata, version: sourceVersion }));
-  await writeFile(path.join(sourceDirectory, "CHANGELOG.md"), "# Changes\n\n## 0.1.0-beta.2\n\nClear provider errors and tested release packages.\n");
+  await writeFile(path.join(sourceDirectory, "CHANGELOG.md"), `# Changes\n\n## ${archivedVersion}\n\nClear provider errors and tested release packages.\n`);
   const git = args => execFileSync("git", args, { cwd: sourceDirectory, encoding: "utf8" });
   git(["init", "--quiet"]);
   git(["add", "."]);
@@ -159,7 +159,7 @@ async function fixture(sourceVersion = "0.1.0-beta.2") {
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   await writeFile(path.join(artifacts, "manifest.json"), JSON.stringify({
     schemaVersion: 1, sourceCommit: commit, repository: "expiracy/autocode", name: metadata.name,
-    version: metadata.version, license: "MIT", channel: "next", filename: "package.tgz", sha256,
+    version: metadata.version, license: "MIT", channel: metadata.publishConfig.tag, filename: "package.tgz", sha256,
     integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
   }));
   return { options: { sourceDirectory, directory: artifacts, commit, diagnostics: path.join(directory, "diagnostics") }, sha256, clean: () => rm(directory, { recursive: true, force: true }) };
@@ -184,6 +184,17 @@ test("the candidate retains the exact archive and manifest and records useful no
     assert.match(result.notes, /Clear provider errors/);
     assert.ok(result.notes.includes(f.options.commit));
     assert.match(result.notes, /npm delivery is separate/i);
+  } finally { await f.clean(); }
+});
+
+test("stable 0.1.0 prepares a non-prerelease GitHub draft on latest with the exact artifact", async () => {
+  const f = await fixture("0.1.0", "0.1.0");
+  try {
+    const result = await prepareCandidate(f.options);
+    assert.equal(result.tag, "v0.1.0");
+    assert.equal(result.prerelease, false);
+    assert.match(result.notes, /Channel: `latest`/);
+    assert.deepEqual(result.assets[0].bytes, await readFile(path.join(f.options.directory, "package.tgz")));
   } finally { await f.clean(); }
 });
 
