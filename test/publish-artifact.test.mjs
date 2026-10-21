@@ -12,8 +12,16 @@ const candidate = { manifest: { name: "opencode-autocode", version: "0.1.0-beta.
 test("rehearsal reports the verified candidate without contacting npm or requiring OIDC", async () => {
   const forbidden = () => { throw new Error("Rehearsal contacted npm"); };
   assert.deepEqual(await deliverPublication({ mode: "rehearsal", candidate, env: {}, lookup: forbidden, publish: forbidden }), {
-    outcome: "rehearsal", version: candidate.manifest.version, sourceCommit: candidate.manifest.sourceCommit, channel: "next", sha256: candidate.manifest.sha256,
+    outcome: "rehearsal", version: candidate.manifest.version, sourceCommit: candidate.manifest.sourceCommit, channel: "next", packageChannel: "next", sha256: candidate.manifest.sha256,
   });
+});
+
+test("an explicit latest rehearsal records the chosen channel without changing the packaged channel", async () => {
+  const forbidden = () => { throw new Error("Rehearsal contacted npm"); };
+  const result = await deliverPublication({ mode: "rehearsal", channel: "latest", candidate, env: {}, lookup: forbidden, publish: forbidden });
+  assert.equal(result.channel, "latest");
+  assert.equal(result.packageChannel, "next");
+  assert.equal(candidate.manifest.channel, "next");
 });
 
 const context = {
@@ -30,6 +38,28 @@ test("publication rejects an unprotected source before any registry lookup or mu
 });
 
 const published = { name: candidate.manifest.name, version: candidate.manifest.version, license: "MIT", channelVersion: candidate.manifest.version, dist: { integrity: candidate.manifest.integrity } };
+
+test("latest publication passes the selected channel through both registry checks and the exact archive write", async () => {
+  const seen = [];
+  const result = await deliverPublication({ mode: "publish", channel: "latest", candidate, env: context, verifyTag: () => {},
+    lookup: async (value, channel) => {
+      assert.equal(value, candidate);
+      assert.equal(channel, "latest");
+      seen.push("lookup");
+      return seen.length === 1 ? undefined : published;
+    },
+    publish: async (value, env, channel) => {
+      assert.equal(value, candidate);
+      assert.equal(value.manifest.channel, "next");
+      assert.equal(env, context);
+      assert.equal(channel, "latest");
+      seen.push("publish");
+    },
+  });
+  assert.equal(result.channel, "latest");
+  assert.equal(result.packageChannel, "next");
+  assert.deepEqual(seen, ["lookup", "publish", "lookup"]);
+});
 
 test("explicit approved publication sends the verified candidate once and verifies registry integrity", async () => {
   const calls = [];
@@ -103,6 +133,19 @@ test("npm receives exactly the verified archive with lifecycle scripts disabled 
   assert.equal(commands.length, 2);
 });
 
+test("an explicit latest publication gives npm the chosen tag and the original archive bytes", async () => {
+  let published = false;
+  await publishVerifiedCandidate(candidate, context, async (command, args) => {
+    if (args[0] === "--version") return { stdout: "12.2.0\n", stderr: "" };
+    assert.equal(args[args.indexOf("--tag") + 1], "latest");
+    assert.deepEqual(await readFile(args[1]), candidate.bytes);
+    assert.equal(candidate.manifest.channel, "next");
+    published = true;
+    return { stdout: "Published\n", stderr: "" };
+  }, "latest");
+  assert.equal(published, true);
+});
+
 async function artifactFixture(t, sourceVersion = candidate.manifest.version) {
   const f = await taggedSource(t);
   const packageDirectory = path.join(f.directory, "archive", "package");
@@ -139,11 +182,16 @@ test("the command rehearses without credentials and retains the exact candidate 
   const diagnostics = path.join(f.directory, "diagnostics");
   const summary = path.join(f.directory, "summary.md");
   const output = execFileSync(process.execPath, ["scripts/publish-artifact.mjs", "rehearsal", "--artifact", f.artifact, "--manifest", f.manifest,
-    "--commit", commit, "--diagnostics", diagnostics], { cwd: repository, encoding: "utf8", env: { PATH: process.env.PATH, GITHUB_STEP_SUMMARY: summary } });
+    "--commit", commit, "--diagnostics", diagnostics, "--channel", "latest"], { cwd: repository, encoding: "utf8", env: { PATH: process.env.PATH, GITHUB_STEP_SUMMARY: summary } });
   assert.match(output, /Rehearsed/);
   const result = JSON.parse(await readFile(path.join(diagnostics, "result.json"), "utf8"));
   assert.equal(result.outcome, "rehearsal");
   assert.equal(result.sha256, f.record.sha256);
+  assert.equal(result.channel, "latest");
+  assert.equal(result.packageChannel, "next");
+  assert.deepEqual(await readFile(f.artifact), f.bytes);
+  assert.match(await readFile(summary, "utf8"), /Channel: `latest`/);
+  assert.match(await readFile(summary, "utf8"), /Packaged default channel: `next`/);
   assert.match(await readFile(summary, "utf8"), new RegExp(`v${source.version.replaceAll(".", "\\.")}`));
 });
 
@@ -203,6 +251,16 @@ test("public metadata lookup resolves the expected channel independently", async
   assert.deepEqual(calls, [`https://registry.npmjs.org/opencode-autocode/${candidate.manifest.version}`, "https://registry.npmjs.org/opencode-autocode/next"]);
 });
 
+test("public metadata checks latest when that channel was explicitly selected", async () => {
+  const calls = [];
+  const metadata = await lookupPublishedVersion(candidate, async url => {
+    calls.push(String(url));
+    return new Response(JSON.stringify(published), { status: 200 });
+  }, "latest");
+  assert.equal(metadata.channelVersion, candidate.manifest.version);
+  assert.deepEqual(calls, [`https://registry.npmjs.org/opencode-autocode/${candidate.manifest.version}`, "https://registry.npmjs.org/opencode-autocode/latest"]);
+});
+
 test("publication requires the trusted manual environment, workflow, hosted source, and token-free OIDC", async () => {
   const forbidden = () => { throw new Error("Unexpected registry contact"); };
   for (const patch of [
@@ -227,6 +285,22 @@ test("an unexpected npm CLI version is rejected before publication", async () =>
     return { stdout: "12.1.0\n", stderr: "" };
   }), /pinned npm/);
   assert.equal(commands, 1);
+});
+
+test("invalid channel selections fail before registry or npm access", async () => {
+  const forbidden = () => assert.fail("Invalid channel reached external IO");
+  for (const channel of ["next", "beta", "", null]) {
+    await assert.rejects(deliverPublication({ mode: "publish", channel, candidate, env: context, verifyTag: forbidden, lookup: forbidden, publish: forbidden }), /publication channel/);
+  }
+  await assert.rejects(publishVerifiedCandidate(candidate, context, forbidden, "beta"), /publication channel/);
+  await assert.rejects(lookupPublishedVersion(candidate, forbidden, "beta"), /publication channel/);
+});
+
+test("selecting latest cannot promote an existing version from another channel", async () => {
+  await assert.rejects(deliverPublication({ mode: "publish", channel: "latest", candidate, env: context, verifyTag: () => {},
+    lookup: async (value, channel) => { assert.equal(channel, "latest"); return { ...published, channelVersion: "0.1.0-beta.1" }; },
+    publish: () => assert.fail("An existing version must not change npm tags"),
+  }), /channel/);
 });
 
 test("retained publication diagnostics redact opaque OIDC credentials and bearer tokens", () => {

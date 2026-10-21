@@ -12,6 +12,15 @@ on:
           - rehearsal
           - publish
 
+      channel:
+        description: Package default, or latest to make this release the default install (including betas)
+        required: true
+        type: choice
+        default: package
+        options:
+          - package
+          - latest
+
 permissions:
   contents: read
 
@@ -32,6 +41,7 @@ jobs:
       - name: Require protected upstream main for publication
         env:
           DELIVERY: ${{ inputs.delivery }}
+          AUTOCODE_PUBLISH_CHANNEL: ${{ inputs.channel }}
         run: |
           case "$DELIVERY" in
             rehearsal) ;;
@@ -40,6 +50,10 @@ jobs:
               test "$GITHUB_REF" = refs/heads/main
               test "$GITHUB_REF_PROTECTED" = true
               ;;
+            *) exit 1 ;;
+          esac
+          case "$AUTOCODE_PUBLISH_CHANNEL" in
+            package|latest) ;;
             *) exit 1 ;;
           esac
 
@@ -71,7 +85,9 @@ jobs:
           merge-multiple: true
           digest-mismatch: error
       - name: Rehearse the exact tested artifact without npm delivery
-        run: node scripts/publish-artifact.mjs rehearsal --artifact "$RUNNER_TEMP/publication/package.tgz" --manifest "$RUNNER_TEMP/publication/manifest.json" --commit "$GITHUB_SHA" --diagnostics "$RUNNER_TEMP/publication-review"
+        env:
+          AUTOCODE_PUBLISH_CHANNEL: ${{ inputs.channel }}
+        run: node scripts/publish-artifact.mjs rehearsal --artifact "$RUNNER_TEMP/publication/package.tgz" --manifest "$RUNNER_TEMP/publication/manifest.json" --commit "$GITHUB_SHA" --diagnostics "$RUNNER_TEMP/publication-review" --channel "$AUTOCODE_PUBLISH_CHANNEL"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -81,7 +97,7 @@ jobs:
           if-no-files-found: ignore
 
   publish:
-    name: Publish the approved tested artifact
+    name: Publish the approved tested artifact (${{ inputs.channel }})
     if: inputs.delivery == 'publish' && github.repository == 'expiracy/autocode' && github.ref == 'refs/heads/main' && github.ref_protected
     needs: [checks, review]
     runs-on: ubuntu-latest
@@ -95,6 +111,7 @@ jobs:
     env:
       AUTOCODE_PUBLISH_ACTION: ${{ inputs.delivery }}
       AUTOCODE_PUBLISH_ENVIRONMENT: npm-production
+      AUTOCODE_PUBLISH_CHANNEL: ${{ inputs.channel }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -114,7 +131,7 @@ jobs:
       - name: Install the pinned OIDC-capable npm CLI
         run: npm install --global npm@12.2.0 --ignore-scripts --no-audit --no-fund
       - name: Publish the tagged artifact through trusted publishing
-        run: node scripts/publish-artifact.mjs publish --artifact "$RUNNER_TEMP/publication/package.tgz" --manifest "$RUNNER_TEMP/publication/manifest.json" --commit "$GITHUB_SHA" --diagnostics "$RUNNER_TEMP/publication-result"
+        run: node scripts/publish-artifact.mjs publish --artifact "$RUNNER_TEMP/publication/package.tgz" --manifest "$RUNNER_TEMP/publication/manifest.json" --commit "$GITHUB_SHA" --diagnostics "$RUNNER_TEMP/publication-result" --channel "$AUTOCODE_PUBLISH_CHANNEL"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

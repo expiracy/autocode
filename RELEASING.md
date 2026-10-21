@@ -40,9 +40,10 @@ It typechecks and tests on both supported Node versions, lints the workflows wit
 checksummed actionlint 1.7.12, and builds JavaScript and **one npm tarball**. Its
 `artifacts/manifest.json` records the source commit, repository, package name and
 version, MIT licence, release channel, filename, SHA-256, SHA-512 integrity, and
-build Node/npm versions. New prereleases use `next`; stable versions use `latest`.
-Making a published prerelease the default `latest` version is a separate,
-explicit maintainer decision. The staging workflow does not change existing tags.
+build Node/npm versions. The packaged default is `next` for prereleases and
+`latest` for stable versions. Direct publication can explicitly select `latest`
+for a new beta. The staging workflow keeps the packaged default; neither workflow
+retags an already published version.
 
 The uploaded package contains `package.tgz` and `manifest.json`. CI passes its
 immutable GitHub artifact ID to every consumer. Fresh-cache installation checks
@@ -246,17 +247,19 @@ rules; a future maintainer must recheck the live settings.
 2. Run **Prepare GitHub release** with `delivery=draft` at that source revision.
    It creates immutable `v<version>` and a reviewable draft package. Publication
    fails unless this tag resolves to the exact checked-out source commit.
-3. Run **Publish npm package** with its default `rehearsal` and inspect the
-   source, version, channel, integrity, and artifact diagnostics.
-4. Run it again with `delivery=publish`. All artifact checks run before GitHub
-   presents **Review deployments** for `npm-production`.
+3. Run **Publish npm package** with its default `delivery=rehearsal`. Choose
+   `channel=package` to follow the packaged default, or **`channel=latest`** to
+   make this new release the default install, including a beta. Inspect the
+   source, version, selected and packaged channels, integrity, and diagnostics.
+4. Run it again with `delivery=publish` and the **same channel**. All artifact
+   checks run before GitHub presents **Review deployments** for `npm-production`.
 5. Review the concrete artifact, then approve that deployment in GitHub. The job
    obtains an environment-bound OIDC identity and publishes the existing archive
    with provenance and lifecycle scripts disabled. It never rebuilds or repacks.
 
 ```sh
-gh workflow run publish.yml --ref main -f delivery=rehearsal
-gh workflow run publish.yml --ref main -f delivery=publish
+gh workflow run publish.yml --ref main -f delivery=rehearsal -f channel=latest
+gh workflow run publish.yml --ref main -f delivery=publish -f channel=latest
 ```
 
 Only the production job has OIDC permission. Its helper rejects an unexpected
@@ -269,8 +272,14 @@ closed. A public integrity mismatch requires investigation and a new version.
 The publish request does not approve its own environment deployment. A maintainer
 must perform the final GitHub approval; do not bypass the gate with an API call.
 After publication, run the registry verification below and inspect npm provenance.
-Publishing a prerelease to `next` does not promote `latest`; that remains a
-separate maintainer decision.
+`channel=latest` publishes the exact tested archive directly with that tag; it
+does not rewrite its packaged `publishConfig.tag`, version, or manifest. The
+review summary and receipt record both channels. This makes default installs
+receive the selected beta and makes it the default version shown on npm. It does
+not also advance `next`. Use `channel=package` for the normal version-based defaults.
+An existing public version on another channel is refused rather than promoted;
+that requires a separate maintainer action. No standalone npm dist-tag permission
+is needed for a new publication.
 
 ## Human publication and verification
 
@@ -284,7 +293,9 @@ after GitHub approval instead of attempting stage approval.
 After either publication path completes:
 
 1. Verify registry metadata and integrity for that exact version and inspect
-   `npm dist-tag ls opencode-autocode`. Beta versions must remain on `next`.
+   `npm dist-tag ls opencode-autocode`. Confirm the selected publication channel
+   resolves to this exact version; betas use `next` by default or `latest` when
+   explicitly selected.
 2. Run `npm run smoke:published` from the matching source revision. This installs
    the manifest version from npm with fresh caches, configures OpenCode by the
    exact package name/version, and runs the native suite. It cannot fall back to

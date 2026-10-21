@@ -24,7 +24,7 @@ Add this entry to `plugins` in your global `~/.config/opencode/opencode.jsonc` o
 ```
 
 - OpenCode installs the package; keep **one** global AutoCode registration.
-- `@next` follows the beta channel. Pin an exact version when you need reproducible installs; check [npm versions](https://www.npmjs.com/package/opencode-autocode?activeTab=versions).
+- `@next` follows the beta channel; `@latest` follows the default release. They can point to different versions. Pin an exact version for reproducible installs; check [npm versions](https://www.npmjs.com/package/opencode-autocode?activeTab=versions).
 - Tested with **OpenCode 2.0.28** on Linux and macOS. Requires the v2 plugin API; development uses Node.js **22.18+**.
 
 AutoCode reviews only shell requests that OpenCode resolves to **`ask`**. Existing `allow` rules skip review. If you need an `ask` rule, follow the [permission configuration guide](https://github.com/expiracy/autocode/blob/main/docs/configuration.md#enable-reviews): rule order matters, so preserve your existing denies.
