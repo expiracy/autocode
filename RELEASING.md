@@ -11,9 +11,9 @@ verified below. The earlier `0.1.0-beta.1` first shipped on 18 October and repla
 the `0.0.0-stage` placeholder as `latest` on 20 October. Check the live registry
 tags when selecting the default install version.
 
-This checkout prepares the still-unreleased `0.1.0-beta.4` for the GitHub Actions
-publication path. The earlier `v0.1.0-beta.3` tag identifies its failed draft-upload
-candidate and remains unchanged. The next version includes the HTTP upload fix.
+This checkout prepares the still-unreleased stable `0.1.0` for GitHub Actions
+publication under `latest`. The earlier `v0.1.0-beta.3` tag identifies its failed draft-upload
+candidate and remains unchanged. The stable candidate includes the HTTP upload fix and explicit publication channel selection.
 A passing rehearsal or uploaded stage alone does not establish publication.
 
 ## Published beta.2 verification

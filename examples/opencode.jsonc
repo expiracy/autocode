@@ -1,10 +1,10 @@
 {
   "$schema": "https://opencode.ai/config.json",
   // Merge into your GLOBAL OpenCode v2 configuration for /autocode config.
-  // Pin the beta version; beta releases use the npm "next" tag.
+  // Pin this stable release; use @latest to follow the default release.
   "plugins": [
     {
-      "package": "opencode-autocode@next",
+      "package": "opencode-autocode@0.1.0",
       // For local development, use your absolute checkout path instead:
       // "package": "/absolute/path/autocode",
       // Build a local checkout with npm ci and npm run build before loading it.
