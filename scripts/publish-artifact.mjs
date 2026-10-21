@@ -36,27 +36,36 @@ function assertPublished(candidate, metadata) {
   assert.equal(metadata.dist?.integrity, candidate.manifest.integrity, "Published artifact integrity mismatch; never overwrite a version.");
 }
 
-export async function deliverPublication({ mode, candidate, env = process.env, lookup, publish, verifyTag = assertPublicationTag }) {
-  const { version, sourceCommit, channel, sha256 } = candidate.manifest;
+function publicationChannel(candidate, selection = "package") {
+  assert.ok(["package", "latest"].includes(selection), "Choose publication channel package or latest.");
+  const channel = selection === "package" ? candidate.manifest.channel : selection;
+  assert.ok(["next", "latest"].includes(channel), "Invalid packaged publication channel.");
+  return channel;
+}
+
+export async function deliverPublication({ mode, candidate, channel: selection = "package", env = process.env, lookup, publish, verifyTag = assertPublicationTag }) {
+  const { version, sourceCommit, sha256 } = candidate.manifest;
+  const channel = publicationChannel(candidate, selection);
   if (mode !== "rehearsal") {
     assert.equal(mode, "publish", "Choose rehearsal or publish.");
     assertPublishContext(env);
     assert.equal(env.GITHUB_SHA, sourceCommit, "Publication source must match the workflow commit.");
   }
-  const result = { outcome: "rehearsal", version, sourceCommit, channel, sha256 };
+  const result = { outcome: "rehearsal", version, sourceCommit, channel, packageChannel: candidate.manifest.channel, sha256 };
   if (mode === "rehearsal") return result;
   await verifyTag(candidate);
-  const existing = await lookup(candidate);
+  const existing = await lookup(candidate, channel);
   if (existing) {
     assertPublished(candidate, existing);
     return { ...result, outcome: "already-published" };
   }
-  await publish(candidate, env);
-  assertPublished(candidate, await lookup(candidate));
+  await publish(candidate, env, channel);
+  assertPublished(candidate, await lookup(candidate, channel));
   return { ...result, outcome: "published" };
 }
 
-export async function lookupPublishedVersion(candidate, fetcher = fetch) {
+export async function lookupPublishedVersion(candidate, fetcher = fetch, publicationChannel = candidate.manifest.channel) {
+  assert.ok(["next", "latest"].includes(publicationChannel), "Invalid publication channel.");
   const { name, version } = candidate.manifest;
   const response = await fetcher(`${REGISTRY}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, {
     redirect: "error", credentials: "omit", headers: { accept: "application/json" }, signal: AbortSignal.timeout(30_000),
@@ -68,7 +77,7 @@ export async function lookupPublishedVersion(candidate, fetcher = fetch) {
   }
   assert.equal(response.status, 200, `Public npm lookup failed with HTTP ${response.status}; refusing publication.`);
   assert.ok(metadata && typeof metadata === "object" && !Array.isArray(metadata), "Invalid public npm metadata.");
-  const channelResponse = await fetcher(`${REGISTRY}/${encodeURIComponent(name)}/${encodeURIComponent(candidate.manifest.channel)}`, {
+  const channelResponse = await fetcher(`${REGISTRY}/${encodeURIComponent(name)}/${encodeURIComponent(publicationChannel)}`, {
     redirect: "error", credentials: "omit", headers: { accept: "application/json" }, signal: AbortSignal.timeout(30_000),
   });
   assert.equal(channelResponse.status, 200, `Public npm channel lookup failed with HTTP ${channelResponse.status}.`);
@@ -86,7 +95,8 @@ export function assertPublicationTag(candidate, sourceDirectory = root) {
   assert.equal(target, candidate.manifest.sourceCommit, `The release tag ${tag} does not point to the tested source commit; refusing publication.`);
 }
 
-export async function publishVerifiedCandidate(candidate, env = process.env, run = exec) {
+export async function publishVerifiedCandidate(candidate, env = process.env, run = exec, channel = candidate.manifest.channel) {
+  assert.ok(["next", "latest"].includes(channel), "Invalid publication channel.");
   assertPublishContext(env);
   const directory = await mkdtemp(path.join(tmpdir(), "autocode-publish-"));
   try {
@@ -100,7 +110,7 @@ export async function publishVerifiedCandidate(candidate, env = process.env, run
     const options = { cwd: directory, env: isolated, timeout: 300_000, maxBuffer: 2_000_000 };
     const version = await run("npm", ["--version"], options);
     assert.equal(version.stdout.trim(), "12.2.0", "Publication requires the pinned npm 12.2.0 CLI.");
-    return await run("npm", ["publish", artifact, "--ignore-scripts", "--provenance", "--access", "public", "--tag", candidate.manifest.channel,
+    return await run("npm", ["publish", artifact, "--ignore-scripts", "--provenance", "--access", "public", "--tag", channel,
       "--userconfig", userconfig, "--globalconfig", globalconfig, "--cache", path.join(directory, "cache"), "--registry", REGISTRY], options);
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
@@ -129,10 +139,11 @@ function argumentsFor(argv) {
   const options = {};
   for (let index = 0; index < flags.length; index += 2) {
     const key = flags[index]?.replace(/^--/, "");
-    assert.ok(flags[index]?.startsWith("--") && ["artifact", "manifest", "commit", "diagnostics"].includes(key) && flags[index + 1] && !flags[index + 1].startsWith("--") && !Object.hasOwn(options, key), "Invalid npm publication arguments.");
+    assert.ok(flags[index]?.startsWith("--") && ["artifact", "manifest", "commit", "diagnostics", "channel"].includes(key) && flags[index + 1] && !flags[index + 1].startsWith("--") && !Object.hasOwn(options, key), "Invalid npm publication arguments.");
     options[key] = flags[index + 1];
   }
   assert.ok(options.artifact && options.manifest && options.commit && options.diagnostics, "Supply --artifact, --manifest, --commit and --diagnostics.");
+  assert.ok(["package", "latest"].includes(options.channel ?? "package"), "Choose publication channel package or latest.");
   return { mode, options };
 }
 
@@ -145,16 +156,17 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     options = parsed.options;
     if (parsed.mode === "publish") assertPublishContext();
     const candidate = await preparePublication(options);
-    result = await deliverPublication({ mode: parsed.mode, candidate, lookup: lookupPublishedVersion,
-      publish: async (value, env) => {
-        const command = await publishVerifiedCandidate(value, env);
+    result = await deliverPublication({ mode: parsed.mode, candidate, channel: options.channel,
+      lookup: (value, channel) => lookupPublishedVersion(value, fetch, channel),
+      publish: async (value, env, channel) => {
+        const command = await publishVerifiedCandidate(value, env, exec, channel);
         output += command.stdout + command.stderr;
       },
     });
     const message = result.outcome === "rehearsal"
       ? `Rehearsed ${candidate.manifest.name}@${result.version}; no npm write or OIDC request was made.`
       : `Verified ${candidate.manifest.name}@${result.version}: ${result.outcome}.`;
-    const review = `${message}\n\n- Source: \`${result.sourceCommit}\`\n- Expected immutable tag: \`v${result.version}\`\n- Channel: \`${result.channel}\`\n- Licence: MIT\n- Archive SHA-256: \`${result.sha256}\`\n- Integrity: \`${candidate.manifest.integrity}\`\n`;
+    const review = `${message}\n\n- Source: \`${result.sourceCommit}\`\n- Expected immutable tag: \`v${result.version}\`\n- Channel: \`${result.channel}\`\n- Packaged default channel: \`${result.packageChannel}\`\n- Licence: MIT\n- Archive SHA-256: \`${result.sha256}\`\n- Integrity: \`${candidate.manifest.integrity}\`\n`;
     console.log(message);
     if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, review, { flag: "a" });
   } catch (error) {
