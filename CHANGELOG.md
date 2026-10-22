@@ -1,8 +1,12 @@
 # Changelog
 
-## 0.1.0 — Unreleased
+## Unreleased
 
-- Prepare the first stable release of AutoCode under the MIT licence, with model-based command review, native configuration, durable review logs, and OpenCode permission and hard-policy enforcement.
+- Verify newly published packages through one canonical npm index and retry only missing-version or stale-channel visibility for up to five minutes. Never replay publication or retry conflicting bytes, authentication failures, or transport errors.
+
+## 0.1.0 — 2026-10-21
+
+- First stable release of AutoCode under the MIT licence, with model-based command review, native configuration, durable review logs, and OpenCode permission and hard-policy enforcement.
 - Use the `latest` npm channel and version-pinned stable installation examples.
 - Include controlled GitHub Actions publication, immutable source tags, verified package assets, explicit channel selection, and the GitHub asset upload fix from the unreleased candidates below.
 

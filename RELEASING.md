@@ -11,10 +11,26 @@ verified below. The earlier `0.1.0-beta.1` first shipped on 18 October and repla
 the `0.0.0-stage` placeholder as `latest` on 20 October. Check the live registry
 tags when selecting the default install version.
 
-This checkout prepares the still-unreleased stable `0.1.0` for GitHub Actions
-publication under `latest`. The earlier `v0.1.0-beta.3` tag identifies its failed draft-upload
-candidate and remains unchanged. The stable candidate includes the HTTP upload fix and explicit publication channel selection.
-A passing rehearsal or uploaded stage alone does not establish publication.
+Stable `0.1.0` was published to `latest` through GitHub Actions OIDC on
+21 October 2026. Its `v0.1.0` tag remains at the exact tested source commit.
+Earlier unpublished beta candidates and their existing tags are retained as
+history. A passing rehearsal or uploaded stage alone does not establish
+publication.
+
+## Stable 0.1.0 verification
+
+| Item | Evidence |
+| --- | --- |
+| Public package | [`opencode-autocode@0.1.0`](https://www.npmjs.com/package/opencode-autocode/v/0.1.0), recorded by npm at 2026-10-21 07:22:30 UTC; `latest`, MIT. |
+| Source | [`90b0627c8ed6b6e20c77e882f2a7e6ab82c689e3`](https://github.com/expiracy/autocode/commit/90b0627c8ed6b6e20c77e882f2a7e6ab82c689e3), immutable tag `v0.1.0`. |
+| Tested draft | [Workflow 39559092055](https://github.com/expiracy/autocode/actions/runs/39559092055) passed full CI and created a normal GitHub draft with the tarball, original manifest, and checksums. |
+| Publication | [Workflow 39559929969](https://github.com/expiracy/autocode/actions/runs/39559929969), after the maintainer approved `npm-production`. The first attempt published successfully but its immediate registry verification saw stale data and failed; public registry metadata and bytes were subsequently verified. |
+| Artifact | Public tarball, production CI artifact, and GitHub draft match byte for byte; SHA-256 `7f575e4c18525fd2351b11cb692d25e4c93ae6afcb4b3e39598fcfa2a3dd601b`. |
+| Product page | The default npm README is the packaged stable README, including its top logo, screenshots, and Ko-fi link; public image bytes match the packaged assets. |
+| Provenance | Public npm SLSA payload identifies the exact source commit and `publish.yml` on `main`; payload inspection is separate from independent Sigstore cryptographic verification. |
+
+The published archive is immutable. The visibility handling change below applies
+to future release workflow executions; do not rebuild or replace `0.1.0`.
 
 ## Published beta.2 verification
 
@@ -233,8 +249,12 @@ npm trust github opencode-autocode \
   --environment=npm-production --allow-publish
 ```
 
-The production npm binding is not yet configured. Create it when a future
-release is ready: npm requires its first successful publish within two days.
+The production npm binding was configured on 21 October 2026 and used for
+`0.1.0`: connection `10a7e26c-ddd8-4c78-93cc-c8d34cec06d0` for `publish.yml` /
+`npm-production`. npm returned direct publication plus its automatically allowed
+staging permission; no standalone dist-tag permission was requested. Recheck the
+live binding before future releases. A newly created connection requires its
+first successful publication within two days.
 
 Review npm trust and GitHub environment settings after setup. The environment
 name in YAML alone does not establish human protection. On 20 October 2026 the
@@ -268,6 +288,16 @@ credentials. A known public version must have identical integrity and still
 resolve through the intended channel for a rerun to count as successful; it does
 not overwrite versions or move tags to make a rerun pass. Registry errors fail
 closed. A public integrity mismatch requires investigation and a new version.
+After a new publish, verification reads the package's canonical public index so
+its version and channel come from the same response, rather than independently
+cached version/tag URLs. Only missing-version or stale-channel visibility is
+retried: up to six reads with 5, 15, 40, 80, and 160 second waits, totaling at most
+five minutes of waiting. The production job has a 20-minute timeout to retain
+headroom for the bounded npm command, registry reads, and diagnostics. The npm
+version probe is limited to 30 seconds, and the publish command runs once. Identity, licence or
+integrity conflicts, malformed responses, authentication failures and transport
+errors fail immediately. Existing-version reruns still fail on channel mismatch
+without retagging anything.
 
 The publish request does not approve its own environment deployment. A maintainer
 must perform the final GitHub approval; do not bypass the gate with an API call.

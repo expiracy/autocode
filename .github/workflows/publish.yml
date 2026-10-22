@@ -101,7 +101,7 @@ jobs:
     if: inputs.delivery == 'publish' && github.repository == 'expiracy/autocode' && github.ref == 'refs/heads/main' && github.ref_protected
     needs: [checks, review]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     environment:
       name: npm-production
       url: https://www.npmjs.com/package/opencode-autocode
