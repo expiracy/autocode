@@ -39,6 +39,7 @@ test("publication rejects an unprotected source before any registry lookup or mu
 });
 
 const published = { name: candidate.manifest.name, version: candidate.manifest.version, license: "MIT", channelVersion: candidate.manifest.version, dist: { integrity: candidate.manifest.integrity } };
+const publicIndex = (tags = { next: candidate.manifest.version }) => ({ name: candidate.manifest.name, versions: { [candidate.manifest.version]: published }, "dist-tags": tags });
 
 test("latest publication passes the selected channel through both registry checks and the exact archive write", async () => {
   const seen = [];
@@ -74,15 +75,91 @@ test("explicit approved publication sends the verified candidate once and verifi
   assert.deepEqual(calls, [candidate.bytes]);
 });
 
-test("only npm's explicit missing-version JSON404 permits a new version", async () => {
+test("post-publication visibility retries reads while publishing the archive only once", async () => {
+  let reads = 0;
+  let writes = 0;
+  const waits = [];
+  const result = await deliverPublication({ mode: "publish", candidate, env: context, verifyTag: () => {},
+    lookup: async () => ++reads <= 2 ? undefined : published,
+    publish: async () => { writes++; },
+    wait: async ms => { waits.push(ms); },
+  });
+  assert.equal(result.outcome, "published");
+  assert.equal(reads, 3);
+  assert.equal(writes, 1);
+  assert.deepEqual(waits, [5000]);
+});
+
+test("a stale channel after publication waits for visibility without another write", async () => {
+  let reads = 0;
+  let writes = 0;
+  const waits = [];
+  const result = await deliverPublication({ mode: "publish", candidate, env: context, verifyTag: () => {},
+    lookup: async () => ++reads === 1 ? undefined : reads === 2 ? { ...published, channelVersion: "0.1.0-beta.1" } : published,
+    publish: async () => { writes++; }, wait: async ms => { waits.push(ms); },
+  });
+  assert.equal(result.outcome, "published");
+  assert.equal(reads, 3);
+  assert.equal(writes, 1);
+  assert.deepEqual(waits, [5000]);
+});
+
+test("missing publication visibility stops after the bounded five-minute grace period", async () => {
+  let reads = 0;
+  let writes = 0;
+  const waits = [];
+  await assert.rejects(deliverPublication({ mode: "publish", candidate, env: context, verifyTag: () => {},
+    lookup: async () => { reads++; return undefined; }, publish: async () => { writes++; }, wait: async ms => { waits.push(ms); },
+  }), /not available from the public registry yet/);
+  assert.equal(reads, 7);
+  assert.equal(writes, 1);
+  assert.deepEqual(waits, [5000, 15000, 40000, 80000, 160000]);
+  assert.equal(waits.reduce((sum, ms) => sum + ms, 0), 300000);
+});
+
+test("a post-publication integrity conflict is never retried", async () => {
+  let reads = 0;
+  let writes = 0;
+  await assert.rejects(deliverPublication({ mode: "publish", candidate, env: context, verifyTag: () => {},
+    lookup: async () => ++reads === 1 ? undefined : { ...published, channelVersion: "0.1.0-beta.1", dist: { integrity: "sha512-conflicting" } },
+    publish: async () => { writes++; }, wait: () => assert.fail("Conflicting bytes must fail immediately"),
+  }), /integrity mismatch/);
+  assert.equal(reads, 2);
+  assert.equal(writes, 1);
+});
+
+test("a post-publication transport failure is never mistaken for visibility lag", async () => {
+  let reads = 0;
+  let writes = 0;
+  await assert.rejects(deliverPublication({ mode: "publish", candidate, env: context, verifyTag: () => {},
+    lookup: async () => { if (++reads === 1) return undefined; throw new Error("Network unavailable"); },
+    publish: async () => { writes++; }, wait: () => assert.fail("Unknown registry failures must not be retried"),
+  }), /Network unavailable/);
+  assert.equal(writes, 1);
+});
+
+test("publication reads version and channel from one uncached public package index", async () => {
+  const calls = [];
+  const metadata = await lookupPublishedVersion(candidate, async (url, options) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ name: candidate.manifest.name, versions: { [candidate.manifest.version]: published }, "dist-tags": { next: candidate.manifest.version } }), { status: 200 });
+  });
+  assert.equal(metadata.version, candidate.manifest.version);
+  assert.equal(metadata.channelVersion, candidate.manifest.version);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://registry.npmjs.org/opencode-autocode");
+  assert.equal(calls[0].options.headers["cache-control"], "no-cache");
+});
+
+test("only a validated package index missing the exact version permits a new version", async () => {
   const calls = [];
   const missing = await lookupPublishedVersion(candidate, async (url, options) => {
     calls.push({ url: String(url), options });
-    return new Response(JSON.stringify(`version not found: ${candidate.manifest.version}`), { status: 404 });
+    return new Response(JSON.stringify({ name: candidate.manifest.name, versions: {}, "dist-tags": {} }), { status: 200 });
   });
   assert.equal(missing, undefined);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, `https://registry.npmjs.org/opencode-autocode/${candidate.manifest.version}`);
+  assert.equal(calls[0].url, "https://registry.npmjs.org/opencode-autocode");
   assert.equal(calls[0].options.redirect, "error");
   assert.equal(calls[0].options.credentials, "omit");
 });
@@ -119,7 +196,8 @@ test("npm receives exactly the verified archive with lifecycle scripts disabled 
   await publishVerifiedCandidate(candidate, { ...context, PATH: process.env.PATH, HOME: process.env.HOME, npm_config_registry: "https://wrong.invalid", NPM_CONFIG_PROVENANCE: "false" }, async (command, args, options) => {
     commands.push(args);
     assert.equal(command, "npm");
-    if (args[0] === "--version") return { stdout: "12.2.0\n", stderr: "" };
+    if (args[0] === "--version") { assert.equal(options.timeout, 30000); return { stdout: "12.2.0\n", stderr: "" }; }
+    assert.equal(options.timeout, 300000);
     assert.equal(args[0], "publish");
     assert.deepEqual(await readFile(args[1]), candidate.bytes);
     assert.equal(path.dirname(args[1]), options.cwd);
@@ -242,24 +320,35 @@ test("authentication, server, malformed, and unrelated404 responses all fail clo
   await assert.rejects(lookupPublishedVersion(candidate, async () => new Response("gateway error", { status: 404 })));
 });
 
-test("public metadata lookup resolves the expected channel independently", async () => {
+test("public metadata lookup resolves the expected channel in the package index", async () => {
   const calls = [];
   const actual = await lookupPublishedVersion(candidate, async url => {
     calls.push(String(url));
-    return new Response(JSON.stringify(published), { status: 200 });
+    return new Response(JSON.stringify(publicIndex()), { status: 200 });
   });
   assert.equal(actual.channelVersion, candidate.manifest.version);
-  assert.deepEqual(calls, [`https://registry.npmjs.org/opencode-autocode/${candidate.manifest.version}`, "https://registry.npmjs.org/opencode-autocode/next"]);
+  assert.deepEqual(calls, ["https://registry.npmjs.org/opencode-autocode"]);
 });
 
 test("public metadata checks latest when that channel was explicitly selected", async () => {
   const calls = [];
   const metadata = await lookupPublishedVersion(candidate, async url => {
     calls.push(String(url));
-    return new Response(JSON.stringify(published), { status: 200 });
+    return new Response(JSON.stringify(publicIndex({ next: "0.1.0-beta.1", latest: candidate.manifest.version })), { status: 200 });
   }, "latest");
   assert.equal(metadata.channelVersion, candidate.manifest.version);
-  assert.deepEqual(calls, [`https://registry.npmjs.org/opencode-autocode/${candidate.manifest.version}`, "https://registry.npmjs.org/opencode-autocode/latest"]);
+  assert.deepEqual(calls, ["https://registry.npmjs.org/opencode-autocode"]);
+});
+
+test("invalid package indexes cannot masquerade as an unpublished version", async () => {
+  for (const index of [
+    { name: "another-package", versions: {}, "dist-tags": {} },
+    { name: candidate.manifest.name, versions: [], "dist-tags": {} },
+    { name: candidate.manifest.name, versions: {}, "dist-tags": null },
+    { ...publicIndex(), versions: { [candidate.manifest.version]: { ...published, version: "0.1.0-beta.9" } } },
+    { ...publicIndex(), "dist-tags": { next: 42 } },
+    { name: candidate.manifest.name, versions: {}, "dist-tags": { next: 42 } },
+  ]) await assert.rejects(lookupPublishedVersion(candidate, async () => new Response(JSON.stringify(index), { status: 200 })), /Invalid public npm/);
 });
 
 test("publication requires the trusted manual environment, workflow, hosted source, and token-free OIDC", async () => {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { verifyArtifact, sanitize } from "./release-artifact.mjs";
+import { setTimeout as delay } from "node:timers/promises";
+import { verifyArtifact, sanitize, releaseChannel } from "./release-artifact.mjs";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { mkdtemp, readFile, mkdir, rm, writeFile } from "node:fs/promises";
@@ -9,6 +10,7 @@ import { promisify } from "node:util";
 
 const REPOSITORY = "expiracy/autocode";
 const REGISTRY = "https://registry.npmjs.org";
+const VISIBILITY_DELAYS = [5000, 15000, 40000, 80000, 160000];
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -27,13 +29,17 @@ export function assertPublishContext(env = process.env) {
   assert.ok(!Object.entries(env).some(([key, value]) => value && /^(npm_token|npm_auth_token|node_auth_token|npm_config_.*(?:auth|token))$/i.test(key)), "Legacy npm credentials must not be supplied.");
 }
 
-function assertPublished(candidate, metadata) {
+function assertPublishedArtifact(candidate, metadata) {
   assert.ok(metadata, "The published version is not available from the public registry yet; retry this workflow safely.");
   assert.equal(metadata.name, candidate.manifest.name, "Published package name mismatch.");
   assert.equal(metadata.version, candidate.manifest.version, "Published package version mismatch.");
   assert.equal(metadata.license, "MIT", "Published package licence mismatch.");
-  assert.equal(metadata.channelVersion, candidate.manifest.version, "Published channel does not target this version; refusing to change dist-tags.");
   assert.equal(metadata.dist?.integrity, candidate.manifest.integrity, "Published artifact integrity mismatch; never overwrite a version.");
+}
+
+function assertPublished(candidate, metadata) {
+  assertPublishedArtifact(candidate, metadata);
+  assert.equal(metadata.channelVersion, candidate.manifest.version, "Published channel does not target this version; refusing to change dist-tags.");
 }
 
 function publicationChannel(candidate, selection = "package") {
@@ -43,7 +49,7 @@ function publicationChannel(candidate, selection = "package") {
   return channel;
 }
 
-export async function deliverPublication({ mode, candidate, channel: selection = "package", env = process.env, lookup, publish, verifyTag = assertPublicationTag }) {
+export async function deliverPublication({ mode, candidate, channel: selection = "package", env = process.env, lookup, publish, verifyTag = assertPublicationTag, wait = delay }) {
   const { version, sourceCommit, sha256 } = candidate.manifest;
   const channel = publicationChannel(candidate, selection);
   if (mode !== "rehearsal") {
@@ -60,30 +66,35 @@ export async function deliverPublication({ mode, candidate, channel: selection =
     return { ...result, outcome: "already-published" };
   }
   await publish(candidate, env, channel);
-  assertPublished(candidate, await lookup(candidate, channel));
+  for (let attempt = 0; attempt <= VISIBILITY_DELAYS.length; attempt++) {
+    const metadata = await lookup(candidate, channel);
+    if (metadata) assertPublishedArtifact(candidate, metadata);
+    if (metadata?.channelVersion === candidate.manifest.version || attempt === VISIBILITY_DELAYS.length) {
+      assertPublished(candidate, metadata);
+      break;
+    }
+    await wait(VISIBILITY_DELAYS[attempt]);
+  }
   return { ...result, outcome: "published" };
 }
 
 export async function lookupPublishedVersion(candidate, fetcher = fetch, publicationChannel = candidate.manifest.channel) {
   assert.ok(["next", "latest"].includes(publicationChannel), "Invalid publication channel.");
   const { name, version } = candidate.manifest;
-  const response = await fetcher(`${REGISTRY}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, {
-    redirect: "error", credentials: "omit", headers: { accept: "application/json" }, signal: AbortSignal.timeout(30_000),
+  const response = await fetcher(`${REGISTRY}/${encodeURIComponent(name)}`, {
+    redirect: "error", credentials: "omit", headers: { accept: "application/json", "cache-control": "no-cache" }, signal: AbortSignal.timeout(30_000),
   });
-  const metadata = await response.json();
-  if (response.status === 404) {
-    assert.equal(metadata, `version not found: ${version}`, "Unexpected npm missing-version response; refusing publication.");
-    return undefined;
-  }
+  const index = await response.json();
   assert.equal(response.status, 200, `Public npm lookup failed with HTTP ${response.status}; refusing publication.`);
-  assert.ok(metadata && typeof metadata === "object" && !Array.isArray(metadata), "Invalid public npm metadata.");
-  const channelResponse = await fetcher(`${REGISTRY}/${encodeURIComponent(name)}/${encodeURIComponent(publicationChannel)}`, {
-    redirect: "error", credentials: "omit", headers: { accept: "application/json" }, signal: AbortSignal.timeout(30_000),
-  });
-  assert.equal(channelResponse.status, 200, `Public npm channel lookup failed with HTTP ${channelResponse.status}.`);
-  const channel = await channelResponse.json();
-  assert.equal(channel.name, name, "Invalid public npm channel metadata.");
-  return { ...metadata, channelVersion: channel.version };
+  const object = value => value && typeof value === "object" && !Array.isArray(value);
+  assert.ok(object(index) && index.name === name && object(index.versions) && object(index["dist-tags"]), "Invalid public npm package index.");
+  const channelVersion = index["dist-tags"][publicationChannel];
+  assert.ok(channelVersion === undefined || typeof channelVersion === "string", "Invalid public npm channel metadata.");
+  if (channelVersion !== undefined) releaseChannel(channelVersion);
+  if (!Object.hasOwn(index.versions, version)) return undefined;
+  const metadata = index.versions[version];
+  assert.ok(object(metadata) && metadata.name === name && metadata.version === version, "Invalid public npm version metadata.");
+  return { ...metadata, channelVersion };
 }
 
 export function assertPublicationTag(candidate, sourceDirectory = root) {
@@ -108,7 +119,7 @@ export async function publishVerifiedCandidate(candidate, env = process.env, run
     await writeFile(globalconfig, "", { mode: 0o600, flag: "wx" });
     const isolated = Object.fromEntries(Object.entries(env).filter(([key]) => !/^(npm_config_|npm_token$|npm_auth_token$|node_auth_token$)/i.test(key)));
     const options = { cwd: directory, env: isolated, timeout: 300_000, maxBuffer: 2_000_000 };
-    const version = await run("npm", ["--version"], options);
+    const version = await run("npm", ["--version"], { ...options, timeout: 30_000 });
     assert.equal(version.stdout.trim(), "12.2.0", "Publication requires the pinned npm 12.2.0 CLI.");
     return await run("npm", ["publish", artifact, "--ignore-scripts", "--provenance", "--access", "public", "--tag", channel,
       "--userconfig", userconfig, "--globalconfig", globalconfig, "--cache", path.join(directory, "cache"), "--registry", REGISTRY], options);
