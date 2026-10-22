@@ -51,39 +51,62 @@ logos, screenshots, and the Ko-fi link were also verified in the public archive.
 
 ## Delivery contract
 
-Pull requests, merge queues, and pushes to `main` run `.github/workflows/ci.yml`.
-It typechecks and tests on both supported Node versions, lints the workflows with
-checksummed actionlint 1.7.12, and builds JavaScript and **one npm tarball**. Its
-`artifacts/manifest.json` records the source commit, repository, package name and
-version, MIT licence, release channel, filename, SHA-256, SHA-512 integrity, and
-build Node/npm versions. The packaged default is `next` for prereleases and
-`latest` for stable versions. Direct publication can explicitly select `latest`
-for a new beta. The staging workflow keeps the packaged default; neither workflow
-retags an already published version.
+Pull requests, merge queues, and pushes to `main` always produce the required
+**CI required** check. Local development and feature-branch pushes do not start
+Actions. The planner reads the complete Git diff without workflow-level path
+filters, so documentation updates cannot leave the merge check pending.
 
-The uploaded package contains `package.tgz` and `manifest.json`. CI passes its
-immutable GitHub artifact ID to every consumer. Fresh-cache installation checks
-on Node.js 22.18 and 24 and native OpenCode checks on Linux and macOS verify and
-install that exact archive, without rebuilding or repacking it. Consumer
-installation disables lifecycle scripts and resolves runtime dependencies and
-peers normally from npm. Native tests use temporary profiles and a local fake
-provider; they do not use maintainer provider connections or execute the
-rejection fixtures.
+| Change or request | Validation |
+| --- | --- |
+| Known Markdown documentation, product images, or funding link | Lightweight planning and merge gate; no runtime jobs or uploads. |
+| Ordinary source, tests, or unknown file paths | Workflow lint, typechecking, and unit tests on the supported Node.js 22.18 minimum. |
+| Dependencies, runtime/compiler configuration, public entrypoints, native test harness, workflows, or delivery helpers | Full Node.js 22.18/24, package installation, and native OpenCode Linux/macOS checks. |
+| Manual **CI** run with `full=true` | Full compatibility validation. Set `full=false` for a deliberate quick check. |
+| Any release, GitHub draft, or npm publication workflow | Full validation, explicitly required by the reusable workflow caller. |
 
-The aggregate **CI required** job passes only when workflow lint, unit checks,
-packaging, installation, and native integrations all pass. Failure, cancellation,
-or skipping any dependency fails the aggregate. Require this check from the
-GitHub Actions app in `main` protection, require branches to be up to date, and
-apply the protection to administrators. Do not add path filters that prevent the
-required workflow from running. See the repository's actual protection settings
-before claiming merge enforcement is active.
+Draft pull requests use the same policy as ready pull requests. The aggregate
+requires every job selected by the plan to succeed and every unselected job to
+be intentionally skipped. Missing or inconsistent outputs, failure, cancellation,
+or an unexpected skip fails the gate. Require **CI required** from the GitHub
+Actions app in `main` protection, require branches to be up to date, and enforce
+protection for administrators. See live protection settings before claiming that
+enforcement is active.
 
-Actions are pinned to commit SHAs, jobs have timeouts, checkout credentials are
-not persisted, and normal jobs use read-only repository permissions. Dependabot
-proposes weekly npm and Actions updates. Package artifacts are retained for 30
-days and diagnostics for 14 days. Host diagnostics include sanitized logs and
-result metadata, not profiles, credentials, or conversation payloads. Download
-release evidence before its retention period expires.
+Full validation waits for fast checks, builds JavaScript, and packs **one npm
+tarball**. Its `manifest.json` binds source commit, repository, package name and
+version, MIT licence, default channel, filename, SHA-256, SHA-512 integrity, and
+build Node/npm versions. Prereleases default to `next`; stable versions default
+to `latest`. An explicit publication selection can use `latest` for a new beta;
+existing versions are never retagged by delivery.
+
+The same uploaded `package.tgz` and original manifest pass by immutable GitHub
+artifact ID to every consumer. Fresh-cache installation on both Node versions
+and native OpenCode checks on Linux and macOS verify those bytes without
+rebuilding or repacking. Runtime dependencies and peers resolve normally from
+npm with consumer lifecycle scripts disabled. Native checks use temporary
+profiles and a local fake provider, with no paid model calls or maintainer
+provider connections.
+
+### Cost controls
+
+- Use standard GitHub-hosted runners, which are free for public repositories;
+  do not select billable larger runners. See [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+- Keep an Actions budget of **$0** with **Stop usage when budget limit is reached**
+  enabled for a hard spending backstop. Billing budgets are configured outside
+  workflow YAML; alerts alone do not stop spending.
+- Development validation retains an archive for **one day**. Release callers
+  explicitly retain their reviewed archive for **30 days** to allow human approval.
+- Passing ordinary checks upload no diagnostic artifacts. Failures retain
+  diagnostics for **three days**; full release diagnostics remain for **14 days**.
+  Sanitized host reports contain no profiles, credentials, or conversation payloads.
+- SHA-pinned Actions, read-only ordinary jobs, non-persisted checkout credentials,
+  timeouts, cancellation of superseded PR runs, and disabled package-manager
+  caches remain in place. Dependabot groups weekly updates; dependency changes
+  still receive full compatibility checks.
+
+Artifact storage is a separate shared allowance. Download release evidence
+before expiry; short retention limits future storage use without deleting
+existing review evidence.
 
 ## One-time delivery setup
 
@@ -267,18 +290,20 @@ rules; a future maintainer must recheck the live settings.
 2. Run **Prepare GitHub release** with `delivery=draft` at that source revision.
    It creates immutable `v<version>` and a reviewable draft package. Publication
    fails unless this tag resolves to the exact checked-out source commit.
-3. Run **Publish npm package** with its default `delivery=rehearsal`. Choose
-   `channel=package` to follow the packaged default, or **`channel=latest`** to
-   make this new release the default install, including a beta. Inspect the
-   source, version, selected and packaged channels, integrity, and diagnostics.
-4. Run it again with `delivery=publish` and the **same channel**. All artifact
-   checks run before GitHub presents **Review deployments** for `npm-production`.
+3. Choose `channel=package` to follow the packaged default, or **`channel=latest`**
+   to make this new release the default install, including a beta. A standalone
+   `delivery=rehearsal` run is optional when you only want a preview.
+4. Run **Publish npm package** with `delivery=publish` and that channel. It already
+   runs full CI and rehearses the exact artifact before GitHub presents **Review
+   deployments** for `npm-production`; a separate rehearsal is not a prerequisite.
 5. Review the concrete artifact, then approve that deployment in GitHub. The job
    obtains an environment-bound OIDC identity and publishes the existing archive
    with provenance and lifecycle scripts disabled. It never rebuilds or repacks.
 
 ```sh
+# Optional standalone preview:
 gh workflow run publish.yml --ref main -f delivery=rehearsal -f channel=latest
+# Full validation and artifact review are included before the approval gate:
 gh workflow run publish.yml --ref main -f delivery=publish -f channel=latest
 ```
 
