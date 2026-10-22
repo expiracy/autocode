@@ -48,6 +48,9 @@ jobs:
     name: Test the release artifact
     needs: request
     uses: ./.github/workflows/ci.yml
+    with:
+      full: true
+      artifact-retention-days: 30
 
   rehearsal:
     name: Rehearsal result
