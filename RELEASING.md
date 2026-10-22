@@ -11,10 +11,26 @@ verified below. The earlier `0.1.0-beta.1` first shipped on 18 October and repla
 the `0.0.0-stage` placeholder as `latest` on 20 October. Check the live registry
 tags when selecting the default install version.
 
-This checkout prepares the still-unreleased stable `0.1.0` for GitHub Actions
-publication under `latest`. The earlier `v0.1.0-beta.3` tag identifies its failed draft-upload
-candidate and remains unchanged. The stable candidate includes the HTTP upload fix and explicit publication channel selection.
-A passing rehearsal or uploaded stage alone does not establish publication.
+Stable `0.1.0` was published to `latest` through GitHub Actions OIDC on
+21 October 2026. Its `v0.1.0` tag remains at the exact tested source commit.
+Earlier unpublished beta candidates and their existing tags are retained as
+history. A passing rehearsal or uploaded stage alone does not establish
+publication.
+
+## Stable 0.1.0 verification
+
+| Item | Evidence |
+| --- | --- |
+| Public package | [`opencode-autocode@0.1.0`](https://www.npmjs.com/package/opencode-autocode/v/0.1.0), recorded by npm at 2026-10-21 07:22:30 UTC; `latest`, MIT. |
+| Source | [`90b0627c8ed6b6e20c77e882f2a7e6ab82c689e3`](https://github.com/expiracy/autocode/commit/90b0627c8ed6b6e20c77e882f2a7e6ab82c689e3), immutable tag `v0.1.0`. |
+| Tested draft | [Workflow 39559092055](https://github.com/expiracy/autocode/actions/runs/39559092055) passed full CI and created a normal GitHub draft with the tarball, original manifest, and checksums. |
+| Publication | [Workflow 39559929969](https://github.com/expiracy/autocode/actions/runs/39559929969), after the maintainer approved `npm-production`. The first attempt published successfully but its immediate registry verification saw stale data and failed; public registry metadata and bytes were subsequently verified. |
+| Artifact | Public tarball, production CI artifact, and GitHub draft match byte for byte; SHA-256 `7f575e4c18525fd2351b11cb692d25e4c93ae6afcb4b3e39598fcfa2a3dd601b`. |
+| Product page | The default npm README is the packaged stable README, including its top logo, screenshots, and Ko-fi link; public image bytes match the packaged assets. |
+| Provenance | Public npm SLSA payload identifies the exact source commit and `publish.yml` on `main`; payload inspection is separate from independent Sigstore cryptographic verification. |
+
+The published archive is immutable. The visibility handling change below applies
+to future release workflow executions; do not rebuild or replace `0.1.0`.
 
 ## Published beta.2 verification
 
@@ -35,39 +51,62 @@ logos, screenshots, and the Ko-fi link were also verified in the public archive.
 
 ## Delivery contract
 
-Pull requests, merge queues, and pushes to `main` run `.github/workflows/ci.yml`.
-It typechecks and tests on both supported Node versions, lints the workflows with
-checksummed actionlint 1.7.12, and builds JavaScript and **one npm tarball**. Its
-`artifacts/manifest.json` records the source commit, repository, package name and
-version, MIT licence, release channel, filename, SHA-256, SHA-512 integrity, and
-build Node/npm versions. The packaged default is `next` for prereleases and
-`latest` for stable versions. Direct publication can explicitly select `latest`
-for a new beta. The staging workflow keeps the packaged default; neither workflow
-retags an already published version.
+Pull requests, merge queues, and pushes to `main` always produce the required
+**CI required** check. Local development and feature-branch pushes do not start
+Actions. The planner reads the complete Git diff without workflow-level path
+filters, so documentation updates cannot leave the merge check pending.
 
-The uploaded package contains `package.tgz` and `manifest.json`. CI passes its
-immutable GitHub artifact ID to every consumer. Fresh-cache installation checks
-on Node.js 22.18 and 24 and native OpenCode checks on Linux and macOS verify and
-install that exact archive, without rebuilding or repacking it. Consumer
-installation disables lifecycle scripts and resolves runtime dependencies and
-peers normally from npm. Native tests use temporary profiles and a local fake
-provider; they do not use maintainer provider connections or execute the
-rejection fixtures.
+| Change or request | Validation |
+| --- | --- |
+| Known Markdown documentation, product images, or funding link | Lightweight planning and merge gate; no runtime jobs or uploads. |
+| Ordinary source, tests, or unknown file paths | Workflow lint, typechecking, and unit tests on the supported Node.js 22.18 minimum. |
+| Dependencies, runtime/compiler configuration, public entrypoints, native test harness, workflows, or delivery helpers | Full Node.js 22.18/24, package installation, and native OpenCode Linux/macOS checks. |
+| Manual **CI** run with `full=true` | Full compatibility validation. Set `full=false` for a deliberate quick check. |
+| Any release, GitHub draft, or npm publication workflow | Full validation, explicitly required by the reusable workflow caller. |
 
-The aggregate **CI required** job passes only when workflow lint, unit checks,
-packaging, installation, and native integrations all pass. Failure, cancellation,
-or skipping any dependency fails the aggregate. Require this check from the
-GitHub Actions app in `main` protection, require branches to be up to date, and
-apply the protection to administrators. Do not add path filters that prevent the
-required workflow from running. See the repository's actual protection settings
-before claiming merge enforcement is active.
+Draft pull requests use the same policy as ready pull requests. The aggregate
+requires every job selected by the plan to succeed and every unselected job to
+be intentionally skipped. Missing or inconsistent outputs, failure, cancellation,
+or an unexpected skip fails the gate. Require **CI required** from the GitHub
+Actions app in `main` protection, require branches to be up to date, and enforce
+protection for administrators. See live protection settings before claiming that
+enforcement is active.
 
-Actions are pinned to commit SHAs, jobs have timeouts, checkout credentials are
-not persisted, and normal jobs use read-only repository permissions. Dependabot
-proposes weekly npm and Actions updates. Package artifacts are retained for 30
-days and diagnostics for 14 days. Host diagnostics include sanitized logs and
-result metadata, not profiles, credentials, or conversation payloads. Download
-release evidence before its retention period expires.
+Full validation waits for fast checks, builds JavaScript, and packs **one npm
+tarball**. Its `manifest.json` binds source commit, repository, package name and
+version, MIT licence, default channel, filename, SHA-256, SHA-512 integrity, and
+build Node/npm versions. Prereleases default to `next`; stable versions default
+to `latest`. An explicit publication selection can use `latest` for a new beta;
+existing versions are never retagged by delivery.
+
+The same uploaded `package.tgz` and original manifest pass by immutable GitHub
+artifact ID to every consumer. Fresh-cache installation on both Node versions
+and native OpenCode checks on Linux and macOS verify those bytes without
+rebuilding or repacking. Runtime dependencies and peers resolve normally from
+npm with consumer lifecycle scripts disabled. Native checks use temporary
+profiles and a local fake provider, with no paid model calls or maintainer
+provider connections.
+
+### Cost controls
+
+- Use standard GitHub-hosted runners, which are free for public repositories;
+  do not select billable larger runners. See [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+- Keep an Actions budget of **$0** with **Stop usage when budget limit is reached**
+  enabled for a hard spending backstop. Billing budgets are configured outside
+  workflow YAML; alerts alone do not stop spending.
+- Development validation retains an archive for **one day**. Release callers
+  explicitly retain their reviewed archive for **30 days** to allow human approval.
+- Passing ordinary checks upload no diagnostic artifacts. Failures retain
+  diagnostics for **three days**; full release diagnostics remain for **14 days**.
+  Sanitized host reports contain no profiles, credentials, or conversation payloads.
+- SHA-pinned Actions, read-only ordinary jobs, non-persisted checkout credentials,
+  timeouts, cancellation of superseded PR runs, and disabled package-manager
+  caches remain in place. Dependabot groups weekly updates; dependency changes
+  still receive full compatibility checks.
+
+Artifact storage is a separate shared allowance. Download release evidence
+before expiry; short retention limits future storage use without deleting
+existing review evidence.
 
 ## One-time delivery setup
 
@@ -233,8 +272,12 @@ npm trust github opencode-autocode \
   --environment=npm-production --allow-publish
 ```
 
-The production npm binding is not yet configured. Create it when a future
-release is ready: npm requires its first successful publish within two days.
+The production npm binding was configured on 21 October 2026 and used for
+`0.1.0`: connection `10a7e26c-ddd8-4c78-93cc-c8d34cec06d0` for `publish.yml` /
+`npm-production`. npm returned direct publication plus its automatically allowed
+staging permission; no standalone dist-tag permission was requested. Recheck the
+live binding before future releases. A newly created connection requires its
+first successful publication within two days.
 
 Review npm trust and GitHub environment settings after setup. The environment
 name in YAML alone does not establish human protection. On 20 October 2026 the
@@ -247,18 +290,20 @@ rules; a future maintainer must recheck the live settings.
 2. Run **Prepare GitHub release** with `delivery=draft` at that source revision.
    It creates immutable `v<version>` and a reviewable draft package. Publication
    fails unless this tag resolves to the exact checked-out source commit.
-3. Run **Publish npm package** with its default `delivery=rehearsal`. Choose
-   `channel=package` to follow the packaged default, or **`channel=latest`** to
-   make this new release the default install, including a beta. Inspect the
-   source, version, selected and packaged channels, integrity, and diagnostics.
-4. Run it again with `delivery=publish` and the **same channel**. All artifact
-   checks run before GitHub presents **Review deployments** for `npm-production`.
+3. Choose `channel=package` to follow the packaged default, or **`channel=latest`**
+   to make this new release the default install, including a beta. A standalone
+   `delivery=rehearsal` run is optional when you only want a preview.
+4. Run **Publish npm package** with `delivery=publish` and that channel. It already
+   runs full CI and rehearses the exact artifact before GitHub presents **Review
+   deployments** for `npm-production`; a separate rehearsal is not a prerequisite.
 5. Review the concrete artifact, then approve that deployment in GitHub. The job
    obtains an environment-bound OIDC identity and publishes the existing archive
    with provenance and lifecycle scripts disabled. It never rebuilds or repacks.
 
 ```sh
+# Optional standalone preview:
 gh workflow run publish.yml --ref main -f delivery=rehearsal -f channel=latest
+# Full validation and artifact review are included before the approval gate:
 gh workflow run publish.yml --ref main -f delivery=publish -f channel=latest
 ```
 
@@ -268,6 +313,16 @@ credentials. A known public version must have identical integrity and still
 resolve through the intended channel for a rerun to count as successful; it does
 not overwrite versions or move tags to make a rerun pass. Registry errors fail
 closed. A public integrity mismatch requires investigation and a new version.
+After a new publish, verification reads the package's canonical public index so
+its version and channel come from the same response, rather than independently
+cached version/tag URLs. Only missing-version or stale-channel visibility is
+retried: up to six reads with 5, 15, 40, 80, and 160 second waits, totaling at most
+five minutes of waiting. The production job has a 20-minute timeout to retain
+headroom for the bounded npm command, registry reads, and diagnostics. The npm
+version probe is limited to 30 seconds, and the publish command runs once. Identity, licence or
+integrity conflicts, malformed responses, authentication failures and transport
+errors fail immediately. Existing-version reruns still fail on channel mismatch
+without retagging anything.
 
 The publish request does not approve its own environment deployment. A maintainer
 must perform the final GitHub approval; do not bypass the gate with an API call.

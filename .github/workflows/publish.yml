@@ -61,6 +61,9 @@ jobs:
     name: Test the publication artifact
     needs: request
     uses: ./.github/workflows/ci.yml
+    with:
+      full: true
+      artifact-retention-days: 30
     permissions:
       contents: read
 
@@ -70,11 +73,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           package-manager-cache: false
@@ -101,7 +104,7 @@ jobs:
     if: inputs.delivery == 'publish' && github.repository == 'expiracy/autocode' && github.ref == 'refs/heads/main' && github.ref_protected
     needs: [checks, review]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     environment:
       name: npm-production
       url: https://www.npmjs.com/package/opencode-autocode
@@ -113,12 +116,12 @@ jobs:
       AUTOCODE_PUBLISH_ENVIRONMENT: npm-production
       AUTOCODE_PUBLISH_CHANNEL: ${{ inputs.channel }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           package-manager-cache: false

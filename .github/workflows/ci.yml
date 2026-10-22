@@ -5,7 +5,24 @@ on:
   merge_group:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run the full installation and native host matrix
+        type: boolean
+        required: true
+        default: true
   workflow_call:
+    inputs:
+      full:
+        description: Release callers require full artifact and native validation
+        type: boolean
+        required: false
+        default: true
+      artifact-retention-days:
+        type: number
+        required: false
+        default: 30
     outputs:
       artifact-name:
         description: The single tested npm tarball and its release manifest.
@@ -26,16 +43,44 @@ defaults:
     shell: bash
 
 jobs:
+  plan:
+    name: Plan necessary CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      checks: ${{ steps.scope.outputs.checks }}
+      full: ${{ steps.scope.outputs.full }}
+      artifact-retention-days: ${{ steps.scope.outputs.artifact-retention-days }}
+      diagnostic-retention-days: ${{ steps.scope.outputs.diagnostic-retention-days }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Select checks from the changed files and explicit request
+        id: scope
+        env:
+          CI_FULL: ${{ inputs.full }}
+          CI_RETENTION_DAYS: ${{ inputs.artifact-retention-days || 1 }}
+        run: node scripts/ci-plan.mjs plan
+
   workflow-lint:
+    needs: plan
+    if: needs.plan.outputs.checks == 'true'
     name: Workflow lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           package-manager-cache: false
@@ -44,27 +89,29 @@ jobs:
           mkdir -p diagnostics
           npm run lint:workflows 2>&1 | tee diagnostics/workflow-lint.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: always() && (failure() || needs.plan.outputs.full == 'true')
         with:
           name: diagnostics-workflow-lint
           path: diagnostics/
-          retention-days: 14
+          retention-days: ${{ needs.plan.outputs.diagnostic-retention-days }}
           if-no-files-found: ignore
 
   checks:
+    needs: plan
+    if: needs.plan.outputs.checks == 'true'
     name: Node ${{ matrix.node }} checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        node: [22.18.0, 24]
+        node: ${{ fromJSON(needs.plan.outputs.full == 'true' && '["22.18.0", "24"]' || '["22.18.0"]') }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
@@ -77,14 +124,16 @@ jobs:
       - name: Unit tests
         run: npm test 2>&1 | tee diagnostics/tests.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: always() && (failure() || needs.plan.outputs.full == 'true')
         with:
           name: diagnostics-checks-node-${{ matrix.node }}
           path: diagnostics/
-          retention-days: 14
+          retention-days: ${{ needs.plan.outputs.diagnostic-retention-days }}
           if-no-files-found: ignore
 
   package:
+    needs: [plan, checks, workflow-lint]
+    if: needs.plan.outputs.full == 'true'
     name: Build one npm artifact
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -92,11 +141,11 @@ jobs:
       artifact-name: opencode-autocode-${{ github.sha }}
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           package-manager-cache: false
@@ -118,18 +167,19 @@ jobs:
             artifacts/package.tgz
             artifacts/manifest.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ needs.plan.outputs.artifact-retention-days }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: always() && (failure() || needs.plan.outputs.full == 'true')
         with:
           name: diagnostics-package
           path: diagnostics/
-          retention-days: 14
+          retention-days: ${{ needs.plan.outputs.diagnostic-retention-days }}
           if-no-files-found: ignore
 
   install:
+    if: needs.plan.outputs.full == 'true'
     name: Artifact install on Node ${{ matrix.node }}
-    needs: package
+    needs: [plan, package]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -137,11 +187,11 @@ jobs:
       matrix:
         node: [22.18.0, 24]
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
@@ -155,16 +205,17 @@ jobs:
           mkdir -p diagnostics
           node scripts/release-artifact.mjs install --artifact artifacts/package.tgz --manifest artifacts/manifest.json --commit "$GITHUB_SHA" --diagnostics diagnostics/install 2>&1 | tee diagnostics/install.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: always() && (failure() || needs.plan.outputs.full == 'true')
         with:
           name: diagnostics-install-node-${{ matrix.node }}
           path: diagnostics/
-          retention-days: 14
+          retention-days: ${{ needs.plan.outputs.diagnostic-retention-days }}
           if-no-files-found: ignore
 
   native:
+    if: needs.plan.outputs.full == 'true'
     name: OpenCode 2.0.28 on ${{ matrix.os }}
-    needs: package
+    needs: [plan, package]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -172,11 +223,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           package-manager-cache: false
@@ -197,23 +248,29 @@ jobs:
         env:
           OPENCODE_BIN: opencode
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: always() && (failure() || needs.plan.outputs.full == 'true')
         with:
           name: diagnostics-native-${{ matrix.os }}
           path: diagnostics/
-          retention-days: 14
+          retention-days: ${{ needs.plan.outputs.diagnostic-retention-days }}
           if-no-files-found: ignore
 
   required:
     name: CI required
     if: ${{ always() }}
-    needs: [workflow-lint, checks, package, install, native]
+    needs: [plan, workflow-lint, checks, package, install, native]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every check, artifact installation, and native integration
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Require the precise planned checks and intentional skips
         env:
-          RESULTS: ${{ toJSON(needs) }}
-        run: |
-          printf '%s\n' "$RESULTS" >> "$GITHUB_STEP_SUMMARY"
-          jq -e 'keys == ["checks", "install", "native", "package", "workflow-lint"] and all(.[]; .result == "success")' <<< "$RESULTS"
+          CI_RESULTS: ${{ toJSON(needs) }}
+        run: node scripts/ci-plan.mjs gate
