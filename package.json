@@ -83,7 +83,7 @@
   "devDependencies": {
     "@opencode/plugin": "2.0.32",
     "@types/node": "^22.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "jsonc-parser": "3.3.1"
